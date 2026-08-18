@@ -400,15 +400,22 @@
   /* ===== 担当者・進捗・経過時間（2026-08-18 追加） ===== */
   .num { font-variant-numeric:tabular-nums; }
   .av {
-    width:20px; height:20px; border-radius:50%; flex:none;
-    font-size:11px; font-weight:700; line-height:1;
+    width:22px; height:22px; border-radius:50%; flex:none;
+    font-size:12px; font-weight:800; line-height:1; letter-spacing:0;
     display:flex; align-items:center; justify-content:center;
+    color:#fff;
   }
-  .av-sm { width:15px; height:15px; font-size:9px; }
-  .av-x { background:#e2e6ec; color:#2f3846; }
-  .av-F { background:#d6e5f7; color:#123963; }
-  .av-S { background:#cceade; color:#0b4434; }
-  .av-T { background:#f6dcd0; color:#5e230e; }
+  .av-sm { width:18px; height:18px; font-size:11px; }
+  .av-x { background:#6b7686; }
+  .av-F { background:#2f6fd0; }
+  .av-S { background:#12916a; }
+  .av-T { background:#d2603a; }
+  /* カレンダーの札の上では白抜きにして、色付きの札からくっきり浮かせる */
+  .cal-pill .av { background:#fff !important; box-shadow:0 0 0 1px rgba(0,0,0,.12); }
+  .cal-pill .av-x { color:#4d5666; }
+  .cal-pill .av-F { color:#1f5cb8; }
+  .cal-pill .av-S { color:#0b7a57; }
+  .cal-pill .av-T { color:#b94c28; }
 
   .cal-pill { position:relative; display:flex; align-items:center; gap:4px; overflow:hidden; }
   .pill-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -426,9 +433,19 @@
   }
   @keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.3;transform:scale(.7)} }
   .pill-el {
-    flex:none; font-size:10px; line-height:1.4; padding:0 4px; border-radius:4px;
+    flex:none; font-size:10px; line-height:1.4; padding:1px 4px; border-radius:4px;
     background:rgba(255,255,255,.3); font-weight:700; font-variant-numeric:tabular-nums;
+    display:inline-flex; align-items:center; gap:3px;
   }
+  /* 完了した人を丸で強調 */
+  .who-chip {
+    display:inline-flex; align-items:center; justify-content:center; flex:none;
+    width:16px; height:16px; border-radius:50%;
+    font-size:10px; font-weight:800; color:#fff; line-height:1;
+    box-shadow:0 0 0 1px rgba(255,255,255,.85);
+  }
+  .pw-x { background:#4d5666; } .pw-F { background:#2f6fd0; }
+  .pw-S { background:#12916a; } .pw-T { background:#d2603a; }
   @media (prefers-reduced-motion:reduce){ .pill-live{ animation:none } }
   /* 完了タスクの取り消し線を、担当者アイコンと作業時間には掛けない */
   .cal-pill.done .av, .cal-pill.done .pill-el { text-decoration:none; }
@@ -944,6 +961,12 @@ function avHtml(t, small){
   const o=ownerOf(t);
   return `<span class="av${small?" av-sm":""} av-${o||"x"}">${o||"共"}</span>`;
 }
+/* 完了した人を色付きの丸で示す */
+function whoChip(name){
+  if(!name) return "";
+  const k=(name==="F"||name==="S"||name==="T") ? name : "x";
+  return `<span class="who-chip pw-${k}">${esc(name)}</span>`;
+}
 
 /* ===== DATE MAP ===== */
 function buildDateMap(calStart){
@@ -1008,9 +1031,11 @@ function renderCalendar(){
       if(st.s==="doing"&&st.a){
         eltime=`<span class="pill-el" data-cel="${t.id}" data-cdate="${cStr}">対応中 ${fmtElapsedShort(st.a)}</span>`;
         hint=`${esc(t.name)}／対応中 ${st.by||""} ${hhmm(st.a)}〜`;
-      } else if(st.s==="done"&&wt){
-        eltime=`<span class="pill-el">⏱${wt}</span>`;
-        hint=`${esc(t.name)}／${st.by||""} 作業時間 ${wt}`;
+      } else if(st.s==="done"){
+        const chip=whoChip(st.by);
+        const label=wt ? `${chip}⏱${wt}` : (st.by?`${chip}完了`:"");
+        if(label) eltime=`<span class="pill-el">${label}</span>`;
+        hint=`${esc(t.name)}／${st.by||"担当者なし"}が完了${wt?"　作業時間 "+wt:""}`;
       }
       pills+=`<div class="cal-pill ${pillCls(t,cStr)} ${rc}" data-pill="${t.id}" title="${hint}" ${bgStyle}>`
            +`${live}${avHtml(t,true)}<span class="pill-name">${ri}${esc(t.name)}</span>${eltime}</div>`;
@@ -1088,7 +1113,8 @@ function renderDayBody(){
       let right;
       if(st.s==="done"){
         const wt=workTime(st);
-        right=`<span class="d2tag done">完了${st.by?" "+esc(st.by):""}`
+        right=`<span class="d2tag done" style="display:inline-flex;align-items:center;gap:5px">`
+            + `${whoChip(st.by)}完了`
             + (wt?`　⏱<span class="num">${wt}</span>`:(st.d?` <span class="num">${hhmm(st.d)}</span>`:""))
             + `</span>`;
       } else if(st.s==="doing"){
