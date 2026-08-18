@@ -1319,7 +1319,9 @@ function showGate(msg){
   gate.style.display="flex";
   gateBtn.hidden=false; gateBusy.hidden=true;
 }
+let _denied=false;   // 拒否メッセージがログアウト処理に上書きされるのを防ぐ（2026-08-18）
 function denied(email){
+  _denied=true;
   firebase.auth().signOut();
   showGate("このアカウント<br><b>"+esc(email)+"</b><br>は許可されていません。<br>担当者にご連絡ください。");
 }
@@ -1331,6 +1333,7 @@ if(String(FB_CFG.apiKey).indexOf("★")>=0){
   fbDb=firebase.database();
 
   gateBtn.addEventListener("click",()=>{
+    _denied=false;
     const p=new firebase.auth.GoogleAuthProvider();
     p.setCustomParameters({prompt:"select_account"});
     gateBtn.hidden=true; gateBusy.hidden=false;
@@ -1347,6 +1350,8 @@ if(String(FB_CFG.apiKey).indexOf("★")>=0){
   firebase.auth().onAuthStateChanged(user=>{
     if(!user){
       myName=""; tasksRef=null;
+      // 直前に拒否した場合は、その理由を消さない（signOutでここが走るため）
+      if(_denied){ gateBtn.hidden=false; gateBusy.hidden=true; return; }
       showGate("スタッフ用です。<br>Googleアカウントでログインしてください。");
       return;
     }
