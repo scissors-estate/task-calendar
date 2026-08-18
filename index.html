@@ -1006,7 +1006,7 @@ function renderCalendar(){
       const wt=workTime(st);
       let eltime="", hint=`${esc(t.name)}（クリックで詳細）`;
       if(st.s==="doing"&&st.a){
-        eltime=`<span class="pill-el" data-cel="${t.id}" data-cdate="${cStr}">${fmtElapsedShort(st.a)}</span>`;
+        eltime=`<span class="pill-el" data-cel="${t.id}" data-cdate="${cStr}">対応中 ${fmtElapsedShort(st.a)}</span>`;
         hint=`${esc(t.name)}／対応中 ${st.by||""} ${hhmm(st.a)}〜`;
       } else if(st.s==="done"&&wt){
         eltime=`<span class="pill-el">⏱${wt}</span>`;
@@ -1196,7 +1196,7 @@ setInterval(()=>{
   document.querySelectorAll("[data-cel]").forEach(el=>{
     const t=tasks.find(x=>x.id===el.dataset.cel); if(!t) return;
     const st=dayState(t,el.dataset.cdate);
-    if(st.s==="doing"&&st.a) el.textContent=fmtElapsedShort(st.a);
+    if(st.s==="doing"&&st.a) el.textContent="対応中 "+fmtElapsedShort(st.a);
   });
   const pe=document.getElementById("popEl");
   if(pe&&popId){
