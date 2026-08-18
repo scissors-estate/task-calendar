@@ -1,0 +1,5 @@
+# メールアドレスが入っているので公開しない（2026-08-18）
+# Firebaseコンソールに貼るためのローカル専用ファイル
+firebase-rules.json
+members.json
+import.json
