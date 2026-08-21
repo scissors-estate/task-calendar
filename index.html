@@ -1063,7 +1063,9 @@ function renderCalendar(){
       const st=dayState(t,cStr);
       const rc=isRecur(t)?"recur":"";
       const ri=isRecur(t)?(st.s==="done"?"✓ ":"🔁 "):"";
-      const bgStyle=t.color?`style="background:${t.color}"`:"";
+      /* 共通タスクは個別の色指定を使わない（担当者のいるタスクだけ色で目立たせる） */
+      const useColor=t.color && ownerOf(t);
+      const bgStyle=useColor?`style="background:${t.color}"`:"";
       const live=st.s==="doing"?`<span class="pill-live"></span>`:"";
       const wt=workTime(st);
       let eltime="", hint=`${esc(t.name)}（クリックで詳細）`;
@@ -1572,7 +1574,7 @@ function renderSide(){
       }
       recurProgress=`<span style="font-size:11px;background:${done===total&&total>0?"#e6f7ef":"#f0f3f8"};color:${done===total&&total>0?"#1a7a45":"var(--muted)"};border-radius:10px;padding:1px 7px;font-weight:600;">${done}/${total}日完了</span>`;
     }
-    const cardStyle=t.color?` style="border-left-color:${t.color}"`:"";
+    const cardStyle=(t.color&&ownerOf(t))?` style="border-left-color:${t.color}"`:"";
     return `<div class="task-card ${u||t.status} ${rc?"recur":""} ${isManual?"sortable":""}" data-id="${t.id}"${cardStyle}>
       <span class="drag-handle" title="ドラッグして並び替え">⠿</span>
       <div class="task-card-body">
