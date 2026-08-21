@@ -430,6 +430,13 @@
   /* 共通タスクの未着手は色を付けない（毎日並ぶので画面を静かに保つ） */
   .cal-pill.plain { background:#fff; color:var(--text); box-shadow:inset 0 0 0 1px var(--border); }
   .cal-pill.plain:hover { filter:none; background:#f6f8fb; }
+  /* 白など明るい色を選んだ札：文字と中のバッジを濃くして読めるようにする */
+  .cal-pill.light { color:var(--text); box-shadow:inset 0 0 0 1px var(--border); }
+  .cal-pill.light:hover { filter:brightness(.97); }
+  .cal-pill.plain .pill-el, .cal-pill.light .pill-el { background:rgba(0,0,0,.07); }
+  .cal-pill.plain .pill-live, .cal-pill.light .pill-live { background:var(--doing); }
+  .cal-pill.plain .who-chip, .cal-pill.light .who-chip { box-shadow:0 0 0 1px rgba(0,0,0,.15); }
+  .cal-pill.plain .av, .cal-pill.light .av { box-shadow:0 0 0 1px rgba(0,0,0,.18); }
   .pill-live {
     width:6px; height:6px; border-radius:50%; background:#fff; flex:none;
     animation:pulseDot 1.4s ease-in-out infinite;
@@ -666,6 +673,7 @@
           <div class="color-swatch" style="background:#7c3aed" data-color="#7c3aed" title="紫"></div>
           <div class="color-swatch" style="background:#d63b8f" data-color="#d63b8f" title="ピンク"></div>
           <div class="color-swatch" style="background:#6b7686" data-color="#6b7686" title="グレー"></div>
+          <div class="color-swatch" style="background:#ffffff;box-shadow:inset 0 0 0 1px #b9c2d0" data-color="#ffffff" title="白"></div>
         </div>
       </div>
 
@@ -973,6 +981,14 @@ function hhmm(ms){
   return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}`;
 }
 function ownerOf(t){ return (t.owner==="F"||t.owner==="S"||t.owner==="T") ? t.owner : ""; }
+/* 白などの明るい色を選んだときは、文字を濃くして枠を付けないと読めなくなる */
+function isLightColor(hex){
+  const h=String(hex||"").replace("#","");
+  if(h.length!==6) return false;
+  const r=parseInt(h.slice(0,2),16), g=parseInt(h.slice(2,4),16), b=parseInt(h.slice(4,6),16);
+  if([r,g,b].some(isNaN)) return false;
+  return (0.299*r+0.587*g+0.114*b) > 186;
+}
 
 /* ===== 並び順（▲▼で入れ替え・2026-08-21 追加） =====
    order を持たないタスクには作成順（id順）で番号を振る。
@@ -1065,7 +1081,10 @@ function renderCalendar(){
       const ri=isRecur(t)?(st.s==="done"?"✓ ":"🔁 "):"";
       /* 共通タスクは個別の色指定を使わない（担当者のいるタスクだけ色で目立たせる） */
       const useColor=t.color && ownerOf(t);
-      const bgStyle=useColor?`style="background:${t.color}"`:"";
+      /* 濃い色を選んだときは白文字に戻す（まもなくの茶色文字が残ると読めないため） */
+      const light=useColor&&isLightColor(t.color);
+      const bgStyle=useColor?`style="background:${t.color}${light?"":";color:#fff"}"`:"";
+      const lightCls=light?" light":"";
       const live=st.s==="doing"?`<span class="pill-live"></span>`:"";
       const wt=workTime(st);
       let eltime="", hint=`${esc(t.name)}（クリックで詳細）`;
@@ -1078,7 +1097,7 @@ function renderCalendar(){
         if(label) eltime=`<span class="pill-el">${label}</span>`;
         hint=`${esc(t.name)}／${st.by||"担当者なし"}が完了${wt?"　作業時間 "+wt:""}`;
       }
-      pills+=`<div class="cal-pill ${pillCls(t,cStr)} ${rc}" data-pill="${t.id}" title="${hint}" ${bgStyle}>`
+      pills+=`<div class="cal-pill ${pillCls(t,cStr)} ${rc}${lightCls}" data-pill="${t.id}" title="${hint}" ${bgStyle}>`
            +`${live}${avHtml(t,true)}<span class="pill-name">${ri}${esc(t.name)}</span>${eltime}</div>`;
     });
     html+=`<div class="cell ${inMonth?"":"dim"} ${cStr===tStr?"today":""} ${selected.has(cStr)?"selected":""}" data-date="${cStr}">
