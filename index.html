@@ -427,6 +427,9 @@
     box-shadow:inset 0 0 0 2px rgba(255,255,255,.7), 0 1px 4px rgba(214,140,20,.5);
   }
   .cal-pill.soon { background:#f0c469; color:#5b3d05; }   /* 進行中の濃いオレンジと区別 */
+  /* 共通タスクの未着手は色を付けない（毎日並ぶので画面を静かに保つ） */
+  .cal-pill.plain { background:#fff; color:var(--text); box-shadow:inset 0 0 0 1px var(--border); }
+  .cal-pill.plain:hover { filter:none; background:#f6f8fb; }
   .pill-live {
     width:6px; height:6px; border-radius:50%; background:#fff; flex:none;
     animation:pulseDot 1.4s ease-in-out infinite;
@@ -464,6 +467,15 @@
   .d2row  { padding:11px 4px; border-bottom:1px solid var(--border); }
   .d2row:last-child { border-bottom:0; }
   .d2top  { display:flex; align-items:center; gap:9px; }
+  /* ▲▼ で順番を入れ替える */
+  .ord { display:flex; flex-direction:column; gap:2px; flex:none; }
+  .ordbtn {
+    font:inherit; font-size:9px; line-height:1; width:22px; height:15px;
+    border:1px solid var(--border); background:#fff; color:var(--muted);
+    border-radius:4px; cursor:pointer; padding:0;
+  }
+  .ordbtn:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+  .ordbtn:disabled { opacity:.28; cursor:default; }
   .d2name {
     flex:1; min-width:0; font:inherit; font-size:14px; font-weight:600; text-align:left;
     background:none; border:0; padding:0; color:var(--text); cursor:pointer;
@@ -803,6 +815,7 @@ function normalizeTask(t){
   if (t.note === undefined)        t.note = "";
   if (t.processedBy === undefined) t.processedBy = "";
   if (t.owner === undefined)       t.owner = "";          // "" = 共通 / F / S / T
+  if (t.order !== undefined && typeof t.order !== "number") t.order = Number(t.order)||0;
   if (!t.dayLog || typeof t.dayLog !== "object" || Array.isArray(t.dayLog)) t.dayLog = {};
   return t;
 }
@@ -840,6 +853,8 @@ function startSync(){
     const v = snap.val() || {};
     _applyingRemote = true;
     tasks = Object.keys(v).map(id => normalizeTask(Object.assign({}, v[id], { id: id })));
+    ensureOrders();
+    tasks.sort(byOrder);
     _lastSaved = {};
     tasks.forEach(t => { _lastSaved[t.id] = JSON.stringify(t); });
     _applyingRemote = false;
@@ -890,7 +905,8 @@ function pillCls(t, dateStr){
   if(s==="done")  return "done";
   if(s==="doing") return "doing";   // 対応中は期限の色より優先（埋もれないように）
   const u=urgency(t);
-  if(u==="overdue") return "overdue";
+  if(u==="overdue") return "overdue";                       // 期限切れの赤だけは共通でも出す
+  if(s==="todo" && !ownerOf(t)) return "plain";             // 共通の未着手は色なし
   if(u==="soon")    return "soon";
   return s;
 }
@@ -957,6 +973,29 @@ function hhmm(ms){
   return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}`;
 }
 function ownerOf(t){ return (t.owner==="F"||t.owner==="S"||t.owner==="T") ? t.owner : ""; }
+
+/* ===== 並び順（▲▼で入れ替え・2026-08-21 追加） =====
+   order を持たないタスクには作成順（id順）で番号を振る。
+   同じデータを見ている3人が必ず同じ番号になるので、順番がズレない。      */
+function ensureOrders(){
+  const noOrd=tasks.filter(t=>typeof t.order!=="number");
+  if(!noOrd.length) return;
+  let max=tasks.reduce((m,t)=>typeof t.order==="number"?Math.max(m,t.order):m,0);
+  noOrd.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0).forEach(t=>{ t.order=++max; });
+}
+function byOrder(a,b){
+  const d=(a.order||0)-(b.order||0);
+  return d!==0 ? d : (a.id<b.id?-1:a.id>b.id?1:0);
+}
+function moveInDay(id, dir){
+  const list=getDayAllTasks(currentDay).slice().sort(byOrder);
+  const i=list.findIndex(t=>t.id===id), j=i+dir;
+  if(i<0||j<0||j>=list.length) return;
+  const a=list[i], b=list[j], tmp=a.order;
+  a.order=b.order; b.order=tmp;
+  try{save();}catch(ex){console.error(ex);}
+  renderCalendar(); renderSide(); renderDayBody();
+}
 function avHtml(t, small){
   const o=ownerOf(t);
   return `<span class="av${small?" av-sm":""} av-${o||"x"}">${o||"共"}</span>`;
@@ -1018,7 +1057,7 @@ function renderCalendar(){
   for(let i=0;i<42;i++){
     const cur=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i);
     const cStr=ymd(cur),inMonth=cur.getMonth()===m,dow=cur.getDay();
-    const dayTasks=(dm[cStr]||[]).sort((a,b)=>(dayState(a,cStr).s==="done")-(dayState(b,cStr).s==="done"));
+    const dayTasks=(dm[cStr]||[]).slice().sort(byOrder);
     let pills="";
     dayTasks.forEach(t=>{
       const st=dayState(t,cStr);
@@ -1098,8 +1137,7 @@ function openDayModal(s){
 function renderDayBody(){
   const s=currentDay;
   const body=document.getElementById("dayModalBody");
-  const list=getDayAllTasks(s).slice()
-    .sort((a,b)=>(dayState(a,s).s==="done")-(dayState(b,s).s==="done"));
+  const list=getDayAllTasks(s).slice().sort(byOrder);
   if(!list.length){ body.innerHTML=`<div class="empty-msg">この日のタスクはありません。</div>`; return; }
   const doneN =list.filter(t=>dayState(t,s).s==="done").length;
   const doingN=list.filter(t=>dayState(t,s).s==="doing").length;
@@ -1108,7 +1146,7 @@ function renderDayBody(){
        <span class="lbl"><span class="num">${list.length}</span>件のタスク</span>
        <span class="lbl">完了 <span class="num">${doneN}</span>　対応中 <span class="num">${doingN}</span></span>
      </div>`
-  + list.map(t=>{
+  + list.map((t,idx)=>{
       const st=dayState(t,s);
       let right;
       if(st.s==="done"){
@@ -1130,6 +1168,10 @@ function renderDayBody(){
       const rc=isRecur(t)?`<div class="d2sub">🔁 ${fmtDows(t.daysOfWeek)}</div>`:"";
       return `<div class="d2row">
         <div class="d2top">
+          <span class="ord">
+            <button class="ordbtn" data-up="${t.id}" title="上へ"${idx===0?" disabled":""}>▲</button>
+            <button class="ordbtn" data-down="${t.id}" title="下へ"${idx===list.length-1?" disabled":""}>▼</button>
+          </span>
           ${avHtml(t)}
           <button class="d2name${st.s==="done"?" off":""}" data-open="${t.id}">${esc(t.name)}</button>
           ${warn}${right}
@@ -1138,6 +1180,9 @@ function renderDayBody(){
     }).join("");
 }
 document.getElementById("dayModalBody").addEventListener("click",e=>{
+  const up=e.target.closest("[data-up]"), dn=e.target.closest("[data-down]");
+  if(up){ moveInDay(up.dataset.up,-1); return; }
+  if(dn){ moveInDay(dn.dataset.down, 1); return; }
   const g=e.target.closest("[data-go]"), o=e.target.closest("[data-open]");
   if(g){
     const t=tasks.find(x=>x.id===g.dataset.go); if(!t) return;
@@ -1389,7 +1434,8 @@ document.getElementById("saveBtn").addEventListener("click",()=>{
     const idx=tasks.findIndex(x=>x.id===editingId);
     if(idx!==-1) tasks[idx]={ ...tasks[idx], ...payload }; // completedDates / dayLog を保持
   } else {
-    tasks.push({ id:uid(), completedDates:[], dayLog:{}, ...payload });
+    const maxOrd=tasks.reduce((m,t)=>Math.max(m,t.order||0),0);
+    tasks.push({ id:uid(), completedDates:[], dayLog:{}, order:maxOrd+1, ...payload });
   }
   editingId=null;
   try{ save(); }catch(e){ console.error("save error",e); }
@@ -1574,8 +1620,9 @@ function renderSide(){
       if(srcIdx<0||dstIdx<0) return;
       const [item]=tasks.splice(srcIdx,1);
       tasks.splice(dstIdx,0,item);
+      tasks.forEach((t,i)=>{ t.order=i+1; });   // 並べた結果を order に焼き付けて保存する
       try{ save(); }catch(e){ console.error(e); }
-      renderSide();
+      renderSide(); renderCalendar();
     });
   });
 }
