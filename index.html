@@ -180,6 +180,56 @@
   .segb.active { background:var(--accent); color:#fff; }
   .nav-spacer { flex:1; min-width:0; }
 
+  /* ===== スマホ表示：日ごとのカードを縦に並べる ===== */
+  .mlist { padding:8px; display:flex; flex-direction:column; gap:8px; }
+  .mday { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .mday.today { border-color:var(--accent); box-shadow:0 0 0 2px #c5d7ff; }
+  .mhead {
+    display:flex; align-items:center; gap:8px; padding:9px 11px;
+    background:#fafbfd; cursor:pointer; border-bottom:1px solid #eef1f6;
+  }
+  .mday.wknd  .mhead { background:#f5f7fb; }
+  .mday.today .mhead { background:#e7efff; }
+  .mhead:active { background:#dde9ff; }
+  .mdate { font-size:16px; font-weight:700; }
+  .mdate.sun { color:#c83030; }
+  .mdate.sat { color:var(--accent); }
+  .mdow { font-size:12px; color:var(--muted); }
+  .mhead .tdy {
+    font-size:9.5px; font-weight:700; color:#fff; background:var(--accent);
+    border-radius:4px; padding:1px 6px;
+  }
+  .mcnt { margin-left:auto; font-size:11px; color:var(--muted); white-space:nowrap; }
+  .mbody { padding:7px 8px; display:flex; flex-direction:column; gap:5px; }
+  .mbody .cal-pill { padding:8px 9px; font-size:12.5px; line-height:1.4; }
+  .mbody .cal-pill .av { width:20px; height:20px; font-size:11px; }
+  .mbody .pill-el { font-size:11px; }
+
+  /* ===== 画面が狭いとき ===== */
+  @media (max-width:820px){
+    header { padding:9px 11px; }
+    header h1 { font-size:15px; }
+    header p  { display:none; }
+    header button, #whoChip { padding:5px 8px !important; font-size:11px !important; }
+    .summary-bar { padding:7px 10px; gap:5px; }
+    .stat { padding:4px 9px; font-size:12px; }
+    .app { height:calc(100vh - 88px); }
+    .app .sidebar { display:none; }
+    .cal-nav { gap:5px; padding:7px 8px; }
+    .cal-nav .title { font-size:13px; min-width:0; }
+    .nav-btn { padding:5px 8px; font-size:11.5px; }
+    .segb { padding:5px 9px; font-size:11.5px; }
+    #sideToggle, #routineBtn { display:none; }
+  }
+  @media (max-width:600px){
+    .cal-nav { gap:4px; padding:6px 7px; }
+    .nav-btn { padding:5px 7px; font-size:11px; }
+    .segb { padding:5px 8px; font-size:11px; }
+    .cal-nav .title { font-size:12.5px; flex-basis:100%; order:-1; }
+    .nav-spacer { display:none; }
+    .day-modal, .pop, .routine-modal, .modal { max-width:calc(100vw - 20px); }
+  }
+
   /* ===== 日付へ移動：1か月のカレンダー ===== */
   .mp-ov { position:fixed; inset:0; z-index:140; display:none; background:rgba(15,25,50,.18); }
   .mp-ov.open { display:block; }
@@ -678,6 +728,7 @@
         <button class="segb" data-mode="month">1か月</button>
       </span>
       <button class="nav-btn" id="jumpBtn" title="カレンダーから日付を選ぶ">📅 日付へ移動</button>
+      <button class="nav-btn" id="mobileToggle" title="スマホ向けの表示に切り替え">📱 スマホ</button>
       <span class="nav-spacer"></span>
       <span class="sel-hint" id="selHint"></span>
       <button class="nav-btn routine" id="routineBtn" title="ルーチン業務を一括登録">📋 ルーチン</button>
@@ -855,12 +906,15 @@ let tasks       = loadTasks();
 let viewDate    = new Date();          // 表示している期間の基準日
 let viewMode    = "week";              // "week" = 1週間 / "month" = 1か月
 let sideOpen    = true;                // 左のタスク一覧を開いているか
+let mobileMode  = false;               // スマホ向けの縦並び表示にするか
 try{
   const vm=localStorage.getItem("calViewMode");
   if(vm==="week"||vm==="month") viewMode=vm;
   const so=localStorage.getItem("calSideOpen");
   sideOpen = so===null ? (window.innerWidth>=1500) : (so==="1");
-}catch(e){}
+  const mb=localStorage.getItem("calMobile");
+  mobileMode = mb===null ? (window.innerWidth<820) : (mb==="1");
+}catch(e){ mobileMode = window.innerWidth<820; }
 let selected    = new Set();
 let lastClicked = null;
 let sideFilter  = "all";
@@ -1232,6 +1286,23 @@ function pillHtml(t, ds){
        + `${live}${avHtml(t,true)}<span class="pill-name">${ri}${esc(t.name)}</span>${eltime}</div>`;
 }
 
+/* 表でもスマホ表示でも同じ操作にする（1度だけ結び付ける） */
+function bindGrid(grid){
+  if(grid.dataset.bound) return;
+  grid.dataset.bound="1";
+  grid.addEventListener("click",e=>{
+    const pill=e.target.closest(".cal-pill");
+    if(pill){ openTaskPop(pill.dataset.pill, pill.dataset.pdate); return; }
+    const dc=e.target.closest(".odate,.mhead");
+    if(dc&&dc.dataset.date){
+      if(e.shiftKey){ toggleSel(dc.dataset.date,true); return; }
+      openDayModal(dc.dataset.date); return;
+    }
+    const oc=e.target.closest(".ocol");
+    if(oc) openAddModal([oc.dataset.date], oc.dataset.own);
+  });
+}
+
 function renderCalendar(){
   const dates=periodDates();
   const tStr=todayStr();
@@ -1239,7 +1310,36 @@ function renderCalendar(){
   document.getElementById("calTitle").textContent=periodTitle(dates);
   document.querySelectorAll(".segb").forEach(b=>b.classList.toggle("active",b.dataset.mode===viewMode));
 
-  let html=`<div class="orow head">`
+  let html="";
+  if(mobileMode){
+    /* スマホ表示：日ごとのカードを縦に並べる（横スクロールが要らない） */
+    dates.forEach(cur=>{
+      const ds=ymd(cur), dow=cur.getDay();
+      const list=(dm[ds]||[]).slice().sort(byOrder);
+      const doneN=list.filter(t=>dayState(t,ds).s==="done").length;
+      const cls=[ ds===tStr?"today":"", (dow===0||dow===6)?"wknd":"" ].join(" ");
+      html+=`<div class="mday ${cls}">`
+        + `<div class="mhead" data-date="${ds}" title="タップでこの日の詳細">`
+        +   `<span class="mdate ${dow===0?"sun":dow===6?"sat":""}">${cur.getMonth()+1}/${cur.getDate()}</span>`
+        +   `<span class="mdow">${DOWS[dow]}</span>`
+        +   (ds===tStr?`<span class="tdy">今日</span>`:"")
+        +   `<span class="mcnt">${list.length?`${doneN} / ${list.length} 完了`:"予定なし"}</span>`
+        + `</div>`
+        + (list.length?`<div class="mbody">${list.map(t=>pillHtml(t,ds)).join("")}</div>`:"")
+        + `</div>`;
+    });
+    const g=document.getElementById("ogrid");
+    g.className="mlist";
+    g.innerHTML=html;
+    bindGrid(g);
+    if(viewMode==="month"){
+      const c=g.querySelector(".mday.today");
+      if(c) c.scrollIntoView({block:"center"});
+    }
+    return;
+  }
+
+  html=`<div class="orow head">`
     + `<div class="ocell odate">日付</div>`
     + OWNER_COLS.map(c=>`<div class="ocell"><span class="av av-sm ${c.cls}">${c.init}</span>${c.label}</div>`).join("")
     + `</div>`;
@@ -1264,21 +1364,9 @@ function renderCalendar(){
   });
 
   const grid=document.getElementById("ogrid");
+  grid.className="ogrid";
   grid.innerHTML=html;
-  if(!grid.dataset.bound){
-    grid.dataset.bound="1";
-    grid.addEventListener("click",e=>{
-      const pill=e.target.closest(".cal-pill");
-      if(pill){ openTaskPop(pill.dataset.pill, pill.dataset.pdate); return; }
-      const dc=e.target.closest(".odate");
-      if(dc&&dc.dataset.date){
-        if(e.shiftKey){ toggleSel(dc.dataset.date,true); return; }
-        openDayModal(dc.dataset.date); return;
-      }
-      const oc=e.target.closest(".ocol");
-      if(oc) openAddModal([oc.dataset.date], oc.dataset.own);
-    });
-  }
+  bindGrid(grid);
   /* 今日の行が見えるところまで運ぶ */
   if(viewMode==="month"){
     const row=grid.querySelector(".orow.today");
@@ -1924,9 +2012,25 @@ document.addEventListener("keydown",e=>{
 });
 /* タスク一覧（左）の表示・非表示。ノートPCでは畳んだほうが表が広く使える */
 function applySide(){
-  document.querySelector(".app").classList.toggle("no-side",!sideOpen);
-  document.getElementById("sideToggle").classList.toggle("primary",sideOpen);
+  /* スマホ表示のときは一覧を出さない（画面が狭いため） */
+  document.querySelector(".app").classList.toggle("no-side",!sideOpen||mobileMode);
+  document.getElementById("sideToggle").classList.toggle("primary",sideOpen&&!mobileMode);
+  /* 画面が狭いときはボタンの文字を短くして、ナビが折り返さないようにする */
+  const narrow=window.innerWidth<600;
+  const mb=document.getElementById("mobileToggle");
+  mb.textContent = mobileMode ? (narrow?"🖥":"🖥 表で見る") : (narrow?"📱":"📱 スマホ");
+  mb.classList.toggle("primary",mobileMode);
+  const jb=document.getElementById("jumpBtn");
+  if(jb) jb.textContent = narrow ? "📅" : "📅 日付へ移動";
+  const qa=document.getElementById("quickAddBtn");
+  if(qa) qa.textContent = narrow ? "＋ 追加" : "＋ タスクを追加";
 }
+window.addEventListener("resize",()=>{ applySide(); });
+document.getElementById("mobileToggle").addEventListener("click",()=>{
+  mobileMode=!mobileMode;
+  try{ localStorage.setItem("calMobile",mobileMode?"1":"0"); }catch(e){}
+  applySide(); renderCalendar();
+});
 document.getElementById("sideToggle").addEventListener("click",()=>{
   sideOpen=!sideOpen;
   try{ localStorage.setItem("calSideOpen",sideOpen?"1":"0"); }catch(e){}
