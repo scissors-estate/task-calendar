@@ -229,7 +229,7 @@
   .cal-pill:hover { filter:brightness(1.1); }
   .cal-pill.todo    { background:var(--todo); }
   .cal-pill.doing   { background:var(--doing); }
-  .cal-pill.done    { background:var(--done); opacity:.7; text-decoration:line-through; }
+  .cal-pill.done    { background:var(--done); opacity:.7; }
   .cal-pill.overdue { background:var(--overdue); }
   .cal-pill.soon    { background:var(--soon); }
   .cal-pill.recur   { border-left:3px solid rgba(255,255,255,.5); }
@@ -524,9 +524,10 @@
   .pw-x { background:#4d5666; } .pw-F { background:#2f6fd0; }
   .pw-S { background:#12916a; } .pw-T { background:#d2603a; }
   @media (prefers-reduced-motion:reduce){ .pill-live{ animation:none } }
-  /* 完了タスクの取り消し線を、担当者アイコンと作業時間には掛けない */
-  .cal-pill.done .av, .cal-pill.done .pill-el { text-decoration:none; }
-  .cal-pill.done { opacity:.8; }
+  /* 取り消し線はタスク名だけに掛ける。
+     親に掛けると担当者の丸や作業時間まで線が貫いてしまうため。 */
+  .cal-pill.done .pill-name { text-decoration:line-through; }
+  .cal-pill.done { opacity:.85; }
   .cal-pill.done .pill-el { background:rgba(255,255,255,.4); }
 
   .dayhead2 {
