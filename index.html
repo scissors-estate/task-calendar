@@ -593,9 +593,18 @@
   .d2row:last-child { border-bottom:0; }
   .d2top  { display:flex; align-items:center; gap:9px; }
   /* ▲▼ で順番を入れ替える */
-  .ord { display:flex; flex-direction:column; gap:2px; flex:none; }
+  .ord { display:flex; flex-direction:column; align-items:center; gap:3px; flex:none; }
+  .ord-ar { display:flex; gap:2px; }
+  .drag-h {
+    cursor:grab; font-size:13px; line-height:1; color:#b6bfcc;
+    user-select:none; padding:1px 4px; border-radius:4px;
+  }
+  .drag-h:hover { color:var(--accent); background:var(--accent-soft); }
+  .drag-h:active { cursor:grabbing; }
+  .d2row.dragging { opacity:.35; }
+  .d2row.drop-hi { box-shadow:inset 0 3px 0 var(--accent); background:var(--accent-soft); }
   .ordbtn {
-    font:inherit; font-size:9px; line-height:1; width:22px; height:15px;
+    font:inherit; font-size:9px; line-height:1; width:17px; height:15px;
     border:1px solid var(--border); background:#fff; color:var(--muted);
     border-radius:4px; cursor:pointer; padding:0;
   }
@@ -1171,6 +1180,21 @@ function byOrder(a,b){
   const d=(a.order||0)-(b.order||0);
   return d!==0 ? d : (a.id<b.id?-1:a.id>b.id?1:0);
 }
+/* つまんだタスクを、離した位置へ一気に動かす。
+   その日のタスクが持っている番号を並べ直して配り直すので、
+   ほかの日のタスクとの前後関係は崩れない。                        */
+function dropInDay(srcId, dstId){
+  if(!srcId||!dstId||srcId===dstId) return;
+  const list=getDayAllTasks(currentDay).slice().sort(byOrder);
+  const si=list.findIndex(t=>t.id===srcId), di=list.findIndex(t=>t.id===dstId);
+  if(si<0||di<0) return;
+  const nums=list.map(t=>t.order||0).sort((a,b)=>a-b);
+  const [item]=list.splice(si,1);
+  list.splice(di,0,item);
+  list.forEach((t,i)=>{ t.order=nums[i]; });
+  try{save();}catch(ex){console.error(ex);}
+  renderCalendar(); renderSide(); renderDayBody();
+}
 function moveInDay(id, dir){
   const list=getDayAllTasks(currentDay).slice().sort(byOrder);
   const i=list.findIndex(t=>t.id===id), j=i+dir;
@@ -1448,11 +1472,14 @@ function renderDayBody(){
         if(u==="overdue") warn=`<span class="badge overdue">期限切れ</span>`;
       }
       const rc=isRecur(t)?`<div class="d2sub">🔁 ${fmtDows(t.daysOfWeek)}</div>`:"";
-      return `<div class="d2row">
+      return `<div class="d2row" data-rid="${t.id}">
         <div class="d2top">
           <span class="ord">
-            <button class="ordbtn" data-up="${t.id}" title="上へ"${idx===0?" disabled":""}>▲</button>
-            <button class="ordbtn" data-down="${t.id}" title="下へ"${idx===list.length-1?" disabled":""}>▼</button>
+            <span class="drag-h" draggable="true" data-drag="${t.id}" title="つまんで好きな位置まで動かせます">⠿</span>
+            <span class="ord-ar">
+              <button class="ordbtn" data-up="${t.id}" title="1つ上へ"${idx===0?" disabled":""}>▲</button>
+              <button class="ordbtn" data-down="${t.id}" title="1つ下へ"${idx===list.length-1?" disabled":""}>▼</button>
+            </span>
           </span>
           ${avHtml(t)}
           <button class="d2name${st.s==="done"?" off":""}" data-open="${t.id}">${esc(t.name)}</button>
@@ -1461,6 +1488,40 @@ function renderDayBody(){
       </div>`;
     }).join("");
 }
+/* ドラッグでの並べ替え（日付詳細） */
+(function(){
+  const body=document.getElementById("dayModalBody");
+  let dragId=null;
+  const clearHi=()=>body.querySelectorAll(".drop-hi").forEach(x=>x.classList.remove("drop-hi"));
+  body.addEventListener("dragstart",e=>{
+    const h=e.target.closest("[data-drag]"); if(!h) return;
+    dragId=h.dataset.drag;
+    e.dataTransfer.effectAllowed="move";
+    e.dataTransfer.setData("text/plain",dragId);
+    const row=h.closest(".d2row");
+    if(row) setTimeout(()=>row.classList.add("dragging"),0);
+  });
+  body.addEventListener("dragover",e=>{
+    if(!dragId) return;
+    const row=e.target.closest(".d2row"); if(!row) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect="move";
+    if(row.dataset.rid===dragId) return;
+    clearHi(); row.classList.add("drop-hi");
+  });
+  body.addEventListener("drop",e=>{
+    if(!dragId) return;
+    const row=e.target.closest(".d2row"); if(!row) return;
+    e.preventDefault();
+    const src=dragId; dragId=null; clearHi();
+    dropInDay(src,row.dataset.rid);
+  });
+  body.addEventListener("dragend",()=>{
+    dragId=null; clearHi();
+    body.querySelectorAll(".dragging").forEach(x=>x.classList.remove("dragging"));
+  });
+})();
+
 document.getElementById("dayModalBody").addEventListener("click",e=>{
   const up=e.target.closest("[data-up]"), dn=e.target.closest("[data-down]");
   if(up){ moveInDay(up.dataset.up,-1); return; }
@@ -1538,6 +1599,7 @@ function drawTaskPop(){
       ${rc}${facts}
       ${act}
       <button class="popact" data-act="edit" style="margin-top:8px">タスクを編集</button>
+      <button class="popact" data-x="1" style="margin-top:8px">閉じる</button>
     </div>`;
 }
 document.getElementById("popOverlay").addEventListener("click",e=>{
