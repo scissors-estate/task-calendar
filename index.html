@@ -662,10 +662,11 @@
   .wrow { display:flex; align-items:center; gap:7px; font-size:12.5px; padding:3px 0; }
   .wrow .wn { font-weight:600; }
   .wrow .wt { margin-left:auto; font-variant-numeric:tabular-nums; }
-  .wrow .wdoing {
-    font-size:10px; font-weight:700; color:#8a5a08; background:#fdf0d8;
-    border-radius:4px; padding:1px 6px;
-  }
+  .wrow .wst { font-size:10px; font-weight:700; border-radius:4px; padding:1px 6px; }
+  .wrow .is-doing { color:#8a5a08; background:#fdf0d8; }
+  .wrow .is-pause { color:#4a3f86; background:#eeebf9; }
+  .wrow .is-done  { color:#1d6642; background:#e2f0e8; }
+  .d2go.fin { background:#e2f0e8; border-color:#a8dfc0; color:#1d6642; font-weight:700; }
   .popact {
     font:inherit; font-size:13.5px; width:100%; margin-top:14px; padding:10px 0;
     border-radius:9px; border:1px solid var(--border); background:#fff; color:var(--text); cursor:pointer;
@@ -1163,14 +1164,17 @@ function activeWorkers(st){
 /* 作業に関わった人（時間の多い順） */
 function workers(st){
   const w=whoMap(st);
-  return Object.keys(w).filter(n=>pElapsed(w[n])>0||w[n].s==="doing")
+  return Object.keys(w).filter(n=>pElapsed(w[n])>0||w[n].s==="doing"||w[n].s==="done")
     .sort((a,b)=>pElapsed(w[b])-pElapsed(w[a]));
 }
-/* 人の状態から、その日全体の状態を決め直す */
+/* 人の状態から、その日全体の状態を決め直す。
+   人の状態は todo / doing（作業中）/ paused（中断）/ done（自分の分は終わり） */
 function rollUp(st){
   if(st.d) return "done";
   const w=whoMap(st), names=Object.keys(w);
+  if(!names.length) return "todo";
   if(names.some(n=>w[n].s==="doing")) return "doing";
+  if(names.every(n=>w[n].s==="done")) return "done";     // 全員が自分の分を終えた
   if(names.some(n=>(Number(w[n].acc)||0)>0)) return "paused";
   return "todo";
 }
@@ -1180,10 +1184,33 @@ function applyWho(t, ds, name, mut){
   const cur=Object.assign({ s:"todo", a:0, acc:0 }, w[name]||{});
   w[name]=mut(cur);
   const next={ who:w, acc:0, a:0 };        // 合計は who から出すので、旧項目は使わない
-  next.s=rollUp(Object.assign({}, st, next));
-  next.by=name||st.by;
+  const someoneDoing=Object.keys(w).some(n=>w[n].s==="doing");
+  next.d = someoneDoing ? 0 : (st.d||0);   // 誰かが動き出したら、いったん完了を外す
+  next.s = rollUp(Object.assign({}, st, next));
+  next.by = name||st.by;
   if(next.s==="doing"&&!st.s0){ next.s0=Date.now(); next.sb=name; }
   setDayState(t, ds, next);
+}
+/* 自分の担当分だけを終える。全員が終えたらタスクごと完了にする */
+function finishMine(t, ds){
+  const me=myName||"—";
+  const st=dayState(t,ds);
+  const w=Object.assign({}, whoMap(st));
+  const cur=Object.assign({ s:"todo", a:0, acc:0 }, w[me]||{});
+  w[me]={ s:"done", a:0, acc:pElapsed(cur) };
+  const next={ who:w, acc:0, a:0, by:me };
+  const names=Object.keys(w);
+  if(names.length && names.every(n=>w[n].s==="done")){
+    next.s="done"; next.p=100; next.d=Date.now();
+  } else {
+    next.d=st.d||0;
+    next.s=rollUp(Object.assign({}, st, next));
+  }
+  setDayState(t, ds, next);
+}
+function myWorkState(st){
+  const w=whoMap(st), me=myName||"—";
+  return (w[me]&&w[me].s)||"todo";
 }
 function startDay(t, ds){
   applyWho(t, ds, myName||"—", p=>({ s:"doing", a:Date.now(), acc:p.acc||0 }));
@@ -1208,8 +1235,8 @@ function resumeDay(t, ds){
 }
 function finishDay(t, ds){
   const st=dayState(t,ds), w=whoMap(st), nw={};
-  /* 動いている人の時計を止めて、それぞれの時間を確定させる */
-  Object.keys(w).forEach(n=>{ nw[n]={ s:"paused", a:0, acc:pElapsed(w[n]) }; });
+  /* 全員の時計を止めて、それぞれの時間を確定させる */
+  Object.keys(w).forEach(n=>{ nw[n]={ s:"done", a:0, acc:pElapsed(w[n]) }; });
   setDayState(t, ds, { s:"done", p:100, who:(Object.keys(nw).length?nw:null),
                        acc:0, a:0, d:Date.now(), by:(myName||"") });
 }
@@ -1309,8 +1336,10 @@ function whoChips(names){ return (names||[]).map(whoChip).join(""); }
 /* 「T 20分・S 5分」のような人ごとの内訳 */
 function breakdown(st){
   const w=whoMap(st);
-  return workers(st).map(n=>({ name:n, ms:pElapsed(w[n]), doing:w[n].s==="doing" }));
+  return workers(st).map(n=>({ name:n, ms:pElapsed(w[n]),
+    doing:w[n].s==="doing", done:w[n].s==="done" }));
 }
+function pLabel(x){ return x.doing?"作業中":(x.done?"完了":"中断"); }
 
 /* ===== DATE MAP ===== */
 function buildDateMap(calStart){
@@ -1576,10 +1605,13 @@ function renderDayBody(){
             + (wt?`　⏱<span class="num">${wt}</span>`:(st.d?` <span class="num">${hhmm(st.d)}</span>`:""))
             + `</span>`;
       } else if(st.s==="doing"){
+        const mine=myWorkState(st);
         right=`<span class="d2tag doing" data-el="${t.id}" style="display:inline-flex;align-items:center;gap:5px">`
             + `${whoChips(activeWorkers(st))}対応中　<span class="num">${fmtElapsed(elapsedMs(st))}</span></span>`
-            + `<button class="d2go" data-go="${t.id}" title="自分も作業に加わる">＋参加</button>`
-            + `<button class="d2go" data-pause="${t.id}" title="一時停止">⏸</button>`;
+            + (mine==="doing"
+                ? `<button class="d2go" data-pause="${t.id}" title="あとで再開する（自分だけ止まります）">⏸</button>`
+                + `<button class="d2go fin" data-mine="${t.id}" title="自分の作業を終える">✓ 自分</button>`
+                : `<button class="d2go" data-go="${t.id}" title="自分も作業に加わる">＋参加</button>`);
       } else if(st.s==="paused"){
         right=`<span class="d2tag paused" style="display:inline-flex;align-items:center;gap:5px">`
             + `${whoChips(bd.map(x=>x.name))}⏸ 中断中　<span class="num">${fmtElapsed(elapsedMs(st))}</span></span>`
@@ -1589,7 +1621,7 @@ function renderDayBody(){
       }
       /* 2人以上が関わっている日は、人ごとの内訳を1行で見せる */
       const bdLine = bd.length>1
-        ? `<div class="d2sub">${bd.map(x=>`${x.name} ${fmtElapsedShort(x.ms)}${x.doing?"（作業中）":""}`).join("　／　")}</div>` : "";
+        ? `<div class="d2sub">${bd.map(x=>`${x.name} ${fmtElapsedShort(x.ms)}（${pLabel(x)}）`).join("　／　")}</div>` : "";
       let warn="";
       if(st.s!=="done"){
         const u=urgency(t);
@@ -1650,11 +1682,12 @@ document.getElementById("dayModalBody").addEventListener("click",e=>{
   const up=e.target.closest("[data-up]"), dn=e.target.closest("[data-down]");
   if(up){ moveInDay(up.dataset.up,-1); return; }
   if(dn){ moveInDay(dn.dataset.down, 1); return; }
-  const ps=e.target.closest("[data-pause]"), rs=e.target.closest("[data-resume]");
-  if(ps||rs){
-    const id=(ps||rs).dataset.pause||(ps||rs).dataset.resume;
+  const ps=e.target.closest("[data-pause]"), rs=e.target.closest("[data-resume]"), mn=e.target.closest("[data-mine]");
+  if(ps||rs||mn){
+    const el=ps||rs||mn;
+    const id=el.dataset.pause||el.dataset.resume||el.dataset.mine;
     const t=tasks.find(x=>x.id===id); if(!t) return;
-    if(ps) pauseDay(t,currentDay); else resumeDay(t,currentDay);
+    if(ps) pauseDay(t,currentDay); else if(rs) resumeDay(t,currentDay); else finishMine(t,currentDay);
     try{save();}catch(ex){console.error(ex);}
     renderCalendar(); renderSide(); renderSummary(); renderDayBody();
     if(popId===id) drawTaskPop();
@@ -1696,7 +1729,7 @@ function drawTaskPop(){
   const bdBlock = bd.length
     ? `<div class="wlist"><div class="wlist-h">作業した人</div>`
       + bd.map(x=>`<div class="wrow">${whoChip(x.name)}<span class="wn">${esc(x.name)}</span>`
-        + (x.doing?`<span class="wdoing">作業中</span>`:"")
+        + `<span class="wst ${x.doing?"is-doing":(x.done?"is-done":"is-pause")}">${pLabel(x)}</span>`
         + `<span class="wt num">${fmtElapsed(x.ms)}</span></div>`).join("")
       + `</div>` : "";
   let tag,facts,act;
@@ -1713,18 +1746,20 @@ function drawTaskPop(){
     facts=startLine
         + `<div class="popfact"><span class="k">経過時間の合計</span><b class="num" id="popEl">${fmtElapsed(elapsedMs(st))}</b></div>`
         + bdBlock;
-    const me=myName||"—", w=whoMap(st);
-    const iAmIn = w[me] && w[me].s==="doing";
-    act=(iAmIn?"":`<button class="popact go" data-act="go">＋ 自分も作業に加わる</button>`)
-      + `<button class="popact" data-act="pause">⏸ ${iAmIn?"自分の作業を止める":"作業を止める"}</button>`
-      + `<button class="popact fin" data-act="done">完了にする</button>`;
+    const mine=myWorkState(st);
+    act=(mine==="doing"
+        ? `<button class="popact" data-act="pause">⏸ 中断する（あとで再開）</button>`
+        + `<button class="popact go" data-act="mine">✓ 自分の作業を終える</button>`
+        : `<button class="popact go" data-act="go">＋ 自分も作業に加わる</button>`)
+      + `<button class="popact fin" data-act="done">タスクを完了にする</button>`;
   } else if(st.s==="paused"){
     tag=`<span class="d2tag paused">⏸ 中断中</span>`;
     facts=startLine
         + `<div class="popfact"><span class="k">ここまでの作業</span><b class="num">${fmtElapsed(elapsedMs(st))}</b></div>`
         + bdBlock;
     act=`<button class="popact go" data-act="resume">▶ 再開する</button>`
-      + `<button class="popact fin" data-act="done">完了にする</button>`;
+      + (myWorkState(st)==="paused"?`<button class="popact" data-act="mine">✓ 自分の作業を終える</button>`:"")
+      + `<button class="popact fin" data-act="done">タスクを完了にする</button>`;
   } else {
     tag=`<span class="d2tag todo">未着手</span>`;
     facts=`<div class="popfact"><span class="k">作業開始</span><b style="font-weight:400;color:var(--muted)">まだ押していません</b></div>`;
@@ -1753,6 +1788,7 @@ document.getElementById("popOverlay").addEventListener("click",e=>{
   if(k==="go")     startDay(t,popDate);
   if(k==="pause")  pauseDay(t,popDate);
   if(k==="resume") resumeDay(t,popDate);
+  if(k==="mine")   finishMine(t,popDate);
   if(k==="done")   finishDay(t,popDate);
   if(k==="back")   resetDay(t,popDate);
   try{save();}catch(ex){console.error(ex);}
