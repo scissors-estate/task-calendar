@@ -83,6 +83,8 @@
     cursor:pointer; color:var(--muted); user-select:none;
   }
   .chip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .filters.owners { border-bottom:1px solid var(--border); padding-top:0; }
+  .filters.owners .chip { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; }
   .task-scroll { flex:1; overflow-y:auto; padding:8px; }
   .task-scroll::-webkit-scrollbar { width:5px; }
   .task-scroll::-webkit-scrollbar-thumb { background:#d4dae3; border-radius:5px; }
@@ -143,6 +145,9 @@
   .orow.wknd   { background:#fbfcfe; }
   .orow.today  { background:#f4f8ff; }
   .orow.sel    { background:#eaf1ff; box-shadow:inset 3px 0 0 var(--accent); }
+  /* 「日付へ移動」で飛んだ先を少しの間光らせる */
+  .orow.jump-hi, .mday.jump-hi { animation:jumpFlash 1.6s ease-out; }
+  @keyframes jumpFlash { 0%,55%{ background:#fff2cc; } 100%{ background:transparent; } }
   .ocell {
     padding:6px 7px; border-right:1px solid #eef1f6;
     display:flex; flex-direction:column; gap:3px; min-height:52px; min-width:0;
@@ -651,6 +656,16 @@
   .popfact { display:flex; justify-content:space-between; gap:10px; font-size:12.5px; padding:3px 0; }
   .popfact b { font-weight:600; }
   .popfact .k { color:var(--muted); }
+  /* 誰が何分やったかの一覧 */
+  .wlist { margin-top:10px; padding-top:9px; border-top:1px solid var(--border); }
+  .wlist-h { font-size:11px; color:var(--muted); margin-bottom:5px; }
+  .wrow { display:flex; align-items:center; gap:7px; font-size:12.5px; padding:3px 0; }
+  .wrow .wn { font-weight:600; }
+  .wrow .wt { margin-left:auto; font-variant-numeric:tabular-nums; }
+  .wrow .wdoing {
+    font-size:10px; font-weight:700; color:#8a5a08; background:#fdf0d8;
+    border-radius:4px; padding:1px 6px;
+  }
   .popact {
     font:inherit; font-size:13.5px; width:100%; margin-top:14px; padding:10px 0;
     border-radius:9px; border:1px solid var(--border); background:#fff; color:var(--text); cursor:pointer;
@@ -721,6 +736,13 @@
       <span class="chip" data-f="done">完了</span>
       <span class="chip" data-f="overdue">要対応</span>
       <span class="chip" data-f="recur">🔁 繰り返し</span>
+    </div>
+    <div class="filters owners" id="ownerFilters">
+      <span class="chip active" data-o="any">全員</span>
+      <span class="chip" data-o=""><span class="av av-sm av-x">共</span>共通</span>
+      <span class="chip" data-o="T"><span class="av av-sm av-T">T</span></span>
+      <span class="chip" data-o="S"><span class="av av-sm av-S">S</span></span>
+      <span class="chip" data-o="F"><span class="av av-sm av-F">F</span></span>
     </div>
     <div class="task-scroll" id="taskScroll"></div>
   </div>
@@ -916,6 +938,7 @@ let viewDate    = new Date();          // 表示している期間の基準日
 let viewMode    = "week";              // "week" = 1週間 / "month" = 1か月
 let sideOpen    = true;                // 左のタスク一覧を開いているか
 let mobileMode  = false;               // スマホ向けの縦並び表示にするか
+let jumpTarget  = null;                // 「日付へ移動」で指定した日（描画後にそこへスクロールする）
 try{
   const vm=localStorage.getItem("calViewMode");
   if(vm==="week"||vm==="month") viewMode=vm;
@@ -927,6 +950,7 @@ try{
 let selected    = new Set();
 let lastClicked = null;
 let sideFilter  = "all";
+let sideOwner   = "any";               // 一覧の担当者しぼり込み： any / "" / T / S / F
 let sideSort    = "deadline";
 let editingId   = null;
 let modalDates  = [];
@@ -1079,17 +1103,20 @@ function isRecur(t){ return t.daysOfWeek&&t.daysOfWeek.length>0; }
 function dayState(t, ds){
   const L = t.dayLog && ds ? t.dayLog[ds] : null;
   if(L) return { p:Number(L.p)||0, s:L.s||"todo", a:Number(L.a)||0,
-                 acc:Number(L.acc)||0, d:Number(L.d)||0, by:L.by||"" };
+                 acc:Number(L.acc)||0, d:Number(L.d)||0, by:L.by||"",
+                 s0:Number(L.s0)||0, sb:L.sb||"",
+                 who:(L.who&&typeof L.who==="object"&&!Array.isArray(L.who))?L.who:null };
   if(isRecur(t)) return isDayCompleted(t,ds)
-    ? { p:100, s:"done", a:0, acc:0, d:0, by:t.processedBy||"" }
-    : { p:0,   s:"todo", a:0, acc:0, d:0, by:"" };
+    ? { p:100, s:"done", a:0, acc:0, d:0, by:t.processedBy||"", s0:0, sb:"", who:null }
+    : { p:0,   s:"todo", a:0, acc:0, d:0, by:"", s0:0, sb:"", who:null };
   return { p:(t.status==="done"?100:0), s:t.status||"todo", a:0, acc:0, d:0,
-           by:(t.status!=="todo" ? (t.processedBy||"") : "") };
+           by:(t.status!=="todo" ? (t.processedBy||"") : ""), s0:0, sb:"", who:null };
 }
 function setDayState(t, ds, patch){
   if(!t.dayLog) t.dayLog={};
   const n=Object.assign({}, dayState(t,ds), patch);
-  t.dayLog[ds]={ p:n.p, s:n.s, a:n.a, acc:n.acc||0, d:n.d, by:n.by };
+  t.dayLog[ds]={ p:n.p, s:n.s, a:n.a, acc:n.acc||0, d:n.d, by:n.by,
+                 s0:n.s0||0, sb:n.sb||"", who:n.who||null };
   /* 従来の項目とも同期させる（サイドバー・集計・繰り返しの完了判定がこれを見ているため）
      中断中は従来の項目では「進行中」として扱う */
   if(isRecur(t)){
@@ -1105,27 +1132,90 @@ function setDayState(t, ds, patch){
 /* 作業開始 → 一時停止 → 再開 → 完了。
    acc に「止めるまでに積み上げた時間」を貯め、a は今回動き出した時刻。
    対応中のときだけ a からの経過を足すので、止めている間は時間が進まない。 */
+/* ===== 複数人での作業（2026-08-25 追加） =====
+   who = { "T":{s:"doing",a:動き出した時刻,acc:積み上げ}, "S":{...} }
+   共通タスクを2人以上で同時に進められるように、人ごとに時計を持つ。
+   who が無い古いデータは、これまでどおり1人ぶんとして読む。            */
+function whoMap(st){
+  if(st.who) return st.who;
+  if(st.acc||st.a){                       // 古い形式を1人ぶんとして読む
+    const k=st.by||"—";
+    const o={}; o[k]={ s:(st.s==="doing"?"doing":"paused"), a:st.a||0, acc:st.acc||0 };
+    return o;
+  }
+  return {};
+}
+function pElapsed(p){
+  const acc=Number(p&&p.acc)||0;
+  return (p&&p.s==="doing"&&p.a) ? acc+Math.max(0,Date.now()-Number(p.a)) : acc;
+}
+/* その日の合計作業時間（全員ぶんを足す） */
 function elapsedMs(st){
-  const acc=st.acc||0;
-  return (st.s==="doing"&&st.a) ? acc+Math.max(0,Date.now()-st.a) : acc;
+  const w=whoMap(st), names=Object.keys(w);
+  if(!names.length) return 0;
+  return names.reduce((sum,n)=>sum+pElapsed(w[n]),0);
+}
+/* いま動いている人 */
+function activeWorkers(st){
+  const w=whoMap(st);
+  return Object.keys(w).filter(n=>w[n].s==="doing");
+}
+/* 作業に関わった人（時間の多い順） */
+function workers(st){
+  const w=whoMap(st);
+  return Object.keys(w).filter(n=>pElapsed(w[n])>0||w[n].s==="doing")
+    .sort((a,b)=>pElapsed(w[b])-pElapsed(w[a]));
+}
+/* 人の状態から、その日全体の状態を決め直す */
+function rollUp(st){
+  if(st.d) return "done";
+  const w=whoMap(st), names=Object.keys(w);
+  if(names.some(n=>w[n].s==="doing")) return "doing";
+  if(names.some(n=>(Number(w[n].acc)||0)>0)) return "paused";
+  return "todo";
+}
+function applyWho(t, ds, name, mut){
+  const st=dayState(t,ds);
+  const w=Object.assign({}, whoMap(st));
+  const cur=Object.assign({ s:"todo", a:0, acc:0 }, w[name]||{});
+  w[name]=mut(cur);
+  const next={ who:w, acc:0, a:0 };        // 合計は who から出すので、旧項目は使わない
+  next.s=rollUp(Object.assign({}, st, next));
+  next.by=name||st.by;
+  if(next.s==="doing"&&!st.s0){ next.s0=Date.now(); next.sb=name; }
+  setDayState(t, ds, next);
 }
 function startDay(t, ds){
-  const st=dayState(t,ds);
-  setDayState(t, ds, { s:"doing", a:Date.now(), acc:(st.acc||0), d:0, by:(myName||"") });
+  applyWho(t, ds, myName||"—", p=>({ s:"doing", a:Date.now(), acc:p.acc||0 }));
 }
 function pauseDay(t, ds){
-  const st=dayState(t,ds);
-  setDayState(t, ds, { s:"paused", acc:elapsedMs(st), a:0, by:(myName||"") });
+  const me=myName||"—";
+  const st=dayState(t,ds), w=whoMap(st);
+  /* 自分が動いていなければ、動いている人をまとめて止める */
+  if(!w[me]||w[me].s!=="doing"){
+    const act=activeWorkers(st);
+    if(!act.length) return;
+    const nw=Object.assign({}, w);
+    act.forEach(n=>{ nw[n]={ s:"paused", a:0, acc:pElapsed(w[n]) }; });
+    const next={ who:nw, acc:0, a:0 }; next.s=rollUp(Object.assign({},st,next));
+    setDayState(t, ds, next);
+    return;
+  }
+  applyWho(t, ds, me, p=>({ s:"paused", a:0, acc:pElapsed(p) }));
 }
 function resumeDay(t, ds){
-  const st=dayState(t,ds);
-  setDayState(t, ds, { s:"doing", a:Date.now(), acc:(st.acc||0), by:(myName||"") });
+  applyWho(t, ds, myName||"—", p=>({ s:"doing", a:Date.now(), acc:p.acc||0 }));
 }
 function finishDay(t, ds){
-  const st=dayState(t,ds);
-  setDayState(t, ds, { s:"done", p:100, acc:elapsedMs(st), a:0, d:Date.now(), by:(myName||"") });
+  const st=dayState(t,ds), w=whoMap(st), nw={};
+  /* 動いている人の時計を止めて、それぞれの時間を確定させる */
+  Object.keys(w).forEach(n=>{ nw[n]={ s:"paused", a:0, acc:pElapsed(w[n]) }; });
+  setDayState(t, ds, { s:"done", p:100, who:(Object.keys(nw).length?nw:null),
+                       acc:0, a:0, d:Date.now(), by:(myName||"") });
 }
-function resetDay(t, ds){ setDayState(t, ds, { s:"todo", p:0, a:0, acc:0, d:0, by:"" }); }
+function resetDay(t, ds){
+  setDayState(t, ds, { s:"todo", p:0, a:0, acc:0, d:0, by:"", s0:0, sb:"", who:null });
+}
 
 /* 引数は「経過ミリ秒」。秒まで出す（詳細画面用） */
 function fmtElapsed(ms){
@@ -1149,7 +1239,8 @@ function fmtDur(ms){
 /* 完了したタスクの実作業時間（止めていた分は含めない） */
 function workTime(st){
   if(st.s!=="done") return "";
-  const ms=st.acc || ((st.a&&st.d&&st.d>st.a) ? st.d-st.a : 0);   // 古いデータは開始→完了の差で出す
+  /* 全員ぶんの合計。古いデータで記録が無ければ開始→完了の差で出す */
+  const ms=elapsedMs(st) || ((st.a&&st.d&&st.d>st.a) ? st.d-st.a : 0);
   return fmtDur(ms);
 }
 function hhmm(ms){
@@ -1208,11 +1299,17 @@ function avHtml(t, small){
   const o=ownerOf(t);
   return `<span class="av${small?" av-sm":""} av-${o||"x"}">${o||"共"}</span>`;
 }
-/* 完了した人を色付きの丸で示す */
+/* 作業した人を色付きの丸で示す */
 function whoChip(name){
   if(!name) return "";
   const k=(name==="F"||name==="S"||name==="T") ? name : "x";
   return `<span class="who-chip pw-${k}">${esc(name)}</span>`;
+}
+function whoChips(names){ return (names||[]).map(whoChip).join(""); }
+/* 「T 20分・S 5分」のような人ごとの内訳 */
+function breakdown(st){
+  const w=whoMap(st);
+  return workers(st).map(n=>({ name:n, ms:pElapsed(w[n]), doing:w[n].s==="doing" }));
 }
 
 /* ===== DATE MAP ===== */
@@ -1294,17 +1391,21 @@ function pillHtml(t, ds){
   const live=st.s==="doing"?`<span class="pill-live"></span>`:"";
   const wt=workTime(st);
   let eltime="", hint=`${esc(t.name)}（クリックで詳細）`;
+  const bd=breakdown(st);
+  const bdText=bd.map(x=>`${x.name} ${fmtElapsedShort(x.ms)}${x.doing?"（作業中）":""}`).join("・");
   if(st.s==="doing"){
-    eltime=`<span class="pill-el" data-cel="${t.id}" data-cdate="${ds}">対応中 ${fmtElapsedShort(elapsedMs(st))}</span>`;
-    hint=`${esc(t.name)}／対応中 ${st.by||""}${st.a?" "+hhmm(st.a)+"〜":""}`;
+    /* 同時に動いている人の丸を並べて、誰がやっているか分かるようにする */
+    const act=activeWorkers(st);
+    eltime=`<span class="pill-el" data-cel="${t.id}" data-cdate="${ds}">${whoChips(act)}対応中 ${fmtElapsedShort(elapsedMs(st))}</span>`;
+    hint=`${esc(t.name)}／対応中${bdText?"　"+bdText:""}`;
   } else if(st.s==="paused"){
-    eltime=`<span class="pill-el">⏸ 中断中 ${fmtElapsedShort(elapsedMs(st))}</span>`;
-    hint=`${esc(t.name)}／中断中　ここまで ${fmtElapsedShort(elapsedMs(st))}`;
+    eltime=`<span class="pill-el">${whoChips(bd.map(x=>x.name))}⏸ 中断中 ${fmtElapsedShort(elapsedMs(st))}</span>`;
+    hint=`${esc(t.name)}／中断中${bdText?"　"+bdText:""}`;
   } else if(st.s==="done"){
-    const chip=whoChip(st.by);
-    const label=wt ? `${chip}⏱${wt}` : (st.by?`${chip}完了`:"");
+    const chips=whoChips(bd.length?bd.map(x=>x.name):(st.by?[st.by]:[]));
+    const label=wt ? `${chips}⏱${wt}` : (chips?`${chips}完了`:"");
     if(label) eltime=`<span class="pill-el">${label}</span>`;
-    hint=`${esc(t.name)}／${st.by||"担当者なし"}が完了${wt?"　作業時間 "+wt:""}`;
+    hint=`${esc(t.name)}／${st.by||"担当者なし"}が完了${wt?"　合計 "+wt:""}${bdText?"（"+bdText+"）":""}`;
   }
   return `<div class="cal-pill ${pillCls(t,ds)} ${rc}${lightCls}" data-pill="${t.id}" data-pdate="${ds}" title="${hint}" ${bgStyle}>`
        + `${live}${avHtml(t,true)}<span class="pill-name">${ri}${esc(t.name)}</span>${eltime}</div>`;
@@ -1356,10 +1457,16 @@ function renderCalendar(){
     g.className="mlist";
     g.innerHTML=html;
     bindGrid(g);
-    if(viewMode==="month"){
-      const c=g.querySelector(".mday.today");
-      if(c) c.scrollIntoView({block:"center"});
+    const w=jumpTarget||(viewMode==="month"?tStr:null);
+    if(w){
+      const h=g.querySelector(`.mhead[data-date="${w}"]`);
+      const card=h?h.closest(".mday"):null;
+      if(card){
+        card.scrollIntoView({block:"center"});
+        if(jumpTarget){ card.classList.add("jump-hi"); setTimeout(()=>card.classList.remove("jump-hi"),1600); }
+      }
     }
+    jumpTarget=null;
     return;
   }
 
@@ -1391,11 +1498,21 @@ function renderCalendar(){
   grid.className="ogrid";
   grid.innerHTML=html;
   bindGrid(grid);
-  /* 今日の行が見えるところまで運ぶ */
-  if(viewMode==="month"){
-    const row=grid.querySelector(".orow.today");
-    if(row) row.scrollIntoView({block:"center"});
+  /* 指定した日があればそこへ、なければ今日の行へスクロールする */
+  const want=jumpTarget||(viewMode==="month"?tStr:null);
+  if(want){
+    const sel=mobileMode?`.mhead[data-date="${want}"]`:`.odate[data-date="${want}"]`;
+    const cell=grid.querySelector(sel);
+    const row=cell?(mobileMode?cell.closest(".mday"):cell.closest(".orow")):null;
+    if(row){
+      row.scrollIntoView({block:"center"});
+      if(jumpTarget){
+        row.classList.add("jump-hi");
+        setTimeout(()=>row.classList.remove("jump-hi"),1600);
+      }
+    }
   }
+  jumpTarget=null;
 }
 
 /* ===== SELECTION ===== */
@@ -1450,22 +1567,29 @@ function renderDayBody(){
      </div>`
   + list.map((t,idx)=>{
       const st=dayState(t,s);
+      const bd=breakdown(st);
       let right;
       if(st.s==="done"){
         const wt=workTime(st);
         right=`<span class="d2tag done" style="display:inline-flex;align-items:center;gap:5px">`
-            + `${whoChip(st.by)}完了`
+            + `${whoChips(bd.length?bd.map(x=>x.name):(st.by?[st.by]:[]))}完了`
             + (wt?`　⏱<span class="num">${wt}</span>`:(st.d?` <span class="num">${hhmm(st.d)}</span>`:""))
             + `</span>`;
       } else if(st.s==="doing"){
-        right=`<span class="d2tag doing" data-el="${t.id}">対応中　<span class="num">${fmtElapsed(elapsedMs(st))}</span></span>`
+        right=`<span class="d2tag doing" data-el="${t.id}" style="display:inline-flex;align-items:center;gap:5px">`
+            + `${whoChips(activeWorkers(st))}対応中　<span class="num">${fmtElapsed(elapsedMs(st))}</span></span>`
+            + `<button class="d2go" data-go="${t.id}" title="自分も作業に加わる">＋参加</button>`
             + `<button class="d2go" data-pause="${t.id}" title="一時停止">⏸</button>`;
       } else if(st.s==="paused"){
-        right=`<span class="d2tag paused">⏸ 中断中　<span class="num">${fmtElapsed(elapsedMs(st))}</span></span>`
+        right=`<span class="d2tag paused" style="display:inline-flex;align-items:center;gap:5px">`
+            + `${whoChips(bd.map(x=>x.name))}⏸ 中断中　<span class="num">${fmtElapsed(elapsedMs(st))}</span></span>`
             + `<button class="d2go" data-resume="${t.id}" title="再開">▶ 再開</button>`;
       } else {
         right=`<button class="d2go" data-go="${t.id}">作業開始</button>`;
       }
+      /* 2人以上が関わっている日は、人ごとの内訳を1行で見せる */
+      const bdLine = bd.length>1
+        ? `<div class="d2sub">${bd.map(x=>`${x.name} ${fmtElapsedShort(x.ms)}${x.doing?"（作業中）":""}`).join("　／　")}</div>` : "";
       let warn="";
       if(st.s!=="done"){
         const u=urgency(t);
@@ -1484,7 +1608,7 @@ function renderDayBody(){
           ${avHtml(t)}
           <button class="d2name${st.s==="done"?" off":""}" data-open="${t.id}">${esc(t.name)}</button>
           ${warn}${right}
-        </div>${rc}
+        </div>${bdLine}${rc}
       </div>`;
     }).join("");
 }
@@ -1563,24 +1687,42 @@ function closeTaskPop(){
 function drawTaskPop(){
   const t=tasks.find(x=>x.id===popId); if(!t) return;
   const st=dayState(t,popDate);
+  const bd=breakdown(st);
+  /* 最初に作業を始めた日時と人 */
+  const startLine = st.s0
+    ? `<div class="popfact"><span class="k">作業開始</span><b><span class="num">${hhmm(st.s0)}</span>${st.sb?"　"+esc(st.sb):""}</b></div>`
+    : (st.a?`<div class="popfact"><span class="k">作業開始</span><b><span class="num">${hhmm(st.a)}</span>${st.by?"　"+esc(st.by):""}</b></div>`:"");
+  /* 誰が何分やったかの一覧 */
+  const bdBlock = bd.length
+    ? `<div class="wlist"><div class="wlist-h">作業した人</div>`
+      + bd.map(x=>`<div class="wrow">${whoChip(x.name)}<span class="wn">${esc(x.name)}</span>`
+        + (x.doing?`<span class="wdoing">作業中</span>`:"")
+        + `<span class="wt num">${fmtElapsed(x.ms)}</span></div>`).join("")
+      + `</div>` : "";
   let tag,facts,act;
   if(st.s==="done"){
     tag=`<span class="d2tag done">完了</span>`;
     const wt=workTime(st);
-    facts=(st.a?`<div class="popfact"><span class="k">作業開始</span><b class="num">${hhmm(st.a)}</b></div>`:"")
+    facts=startLine
         + `<div class="popfact"><span class="k">完了</span><b>${st.d?`<span class="num">${hhmm(st.d)}</span>`:"—"}${st.by?"　"+esc(st.by):""}</b></div>`
-        + (wt?`<div class="popfact"><span class="k">作業時間</span><b class="num" style="color:var(--done)">${wt}</b></div>`:"");
+        + (wt?`<div class="popfact"><span class="k">作業時間の合計</span><b class="num" style="color:var(--done)">${wt}</b></div>`:"")
+        + bdBlock;
     act=`<button class="popact" data-act="back">未着手に戻す</button>`;
   } else if(st.s==="doing"){
     tag=`<span class="d2tag doing">対応中</span>`;
-    facts=`<div class="popfact"><span class="k">作業開始</span><b><span class="num">${hhmm(st.a)}</span>${st.by?"　"+esc(st.by):""}</b></div>`
-        + `<div class="popfact"><span class="k">経過時間</span><b class="num" id="popEl">${fmtElapsed(elapsedMs(st))}</b></div>`;
-    act=`<button class="popact" data-act="pause">⏸ 一時停止</button>`
+    facts=startLine
+        + `<div class="popfact"><span class="k">経過時間の合計</span><b class="num" id="popEl">${fmtElapsed(elapsedMs(st))}</b></div>`
+        + bdBlock;
+    const me=myName||"—", w=whoMap(st);
+    const iAmIn = w[me] && w[me].s==="doing";
+    act=(iAmIn?"":`<button class="popact go" data-act="go">＋ 自分も作業に加わる</button>`)
+      + `<button class="popact" data-act="pause">⏸ ${iAmIn?"自分の作業を止める":"作業を止める"}</button>`
       + `<button class="popact fin" data-act="done">完了にする</button>`;
   } else if(st.s==="paused"){
     tag=`<span class="d2tag paused">⏸ 中断中</span>`;
-    facts=`<div class="popfact"><span class="k">ここまでの作業</span><b class="num">${fmtElapsed(elapsedMs(st))}</b></div>`
-        + `<div class="popfact"><span class="k">最後に触った人</span><b>${st.by?esc(st.by):"—"}</b></div>`;
+    facts=startLine
+        + `<div class="popfact"><span class="k">ここまでの作業</span><b class="num">${fmtElapsed(elapsedMs(st))}</b></div>`
+        + bdBlock;
     act=`<button class="popact go" data-act="resume">▶ 再開する</button>`
       + `<button class="popact fin" data-act="done">完了にする</button>`;
   } else {
@@ -1625,18 +1767,25 @@ setInterval(()=>{
   document.querySelectorAll("[data-el]").forEach(el=>{
     const t=tasks.find(x=>x.id===el.dataset.el); if(!t) return;
     const st=dayState(t,currentDay);
-    if(st.s==="doing") el.innerHTML=`対応中　<span class="num">${fmtElapsed(elapsedMs(st))}</span>`;
+    if(st.s==="doing") el.innerHTML=`${whoChips(activeWorkers(st))}対応中　<span class="num">${fmtElapsed(elapsedMs(st))}</span>`;
   });
   document.querySelectorAll("[data-cel]").forEach(el=>{
     const t=tasks.find(x=>x.id===el.dataset.cel); if(!t) return;
     const st=dayState(t,el.dataset.cdate);
-    if(st.s==="doing") el.textContent="対応中 "+fmtElapsedShort(elapsedMs(st));
+    if(st.s==="doing") el.innerHTML=`${whoChips(activeWorkers(st))}対応中 ${fmtElapsedShort(elapsedMs(st))}`;
   });
   const pe=document.getElementById("popEl");
   if(pe&&popId){
     const t=tasks.find(x=>x.id===popId);
     if(t){ const st=dayState(t,popDate); if(st.s==="doing") pe.textContent=fmtElapsed(elapsedMs(st)); }
   }
+  /* 人ごとの時間も動かす */
+  document.querySelectorAll("#popOverlay .wrow").forEach((row,i)=>{
+    if(!popId) return;
+    const t=tasks.find(x=>x.id===popId); if(!t) return;
+    const bd=breakdown(dayState(t,popDate));
+    if(bd[i]) row.querySelector(".wt").textContent=fmtElapsed(bd[i].ms);
+  });
 },1000);
 function closeDayModal(){ document.getElementById("dayOverlay").classList.remove("open"); }
 document.getElementById("dayClose").addEventListener("click",closeDayModal);
@@ -1898,6 +2047,7 @@ function renderSide(){
   if(sideFilter==="overdue") arr=arr.filter(t=>urgency(t)==="overdue"||urgency(t)==="soon");
   else if(sideFilter==="recur") arr=arr.filter(isRecur);
   else if(sideFilter!=="all") arr=arr.filter(t=>t.status===sideFilter);
+  if(sideOwner!=="any") arr=arr.filter(t=>ownerOf(t)===sideOwner);
   const isManual = sideSort==="manual";
   if(!isManual){
     arr.sort((a,b)=>{
@@ -2067,7 +2217,7 @@ document.getElementById("mpOverlay").addEventListener("click",e=>{
   if(nav){ mpDate=new Date(mpDate.getFullYear(),mpDate.getMonth()+Number(nav.dataset.mp),1); drawMonthPicker(); return; }
   if(e.target.closest("[data-mpclose]")){ closeMonthPicker(); return; }
   const j=e.target.closest("[data-jump]");
-  if(j){ viewDate=parse(j.dataset.jump); closeMonthPicker(); renderCalendar(); }
+  if(j){ viewDate=parse(j.dataset.jump); jumpTarget=j.dataset.jump; closeMonthPicker(); renderCalendar(); }
 });
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"&&document.getElementById("mpOverlay").classList.contains("open")) closeMonthPicker();
@@ -2101,6 +2251,13 @@ document.getElementById("sideToggle").addEventListener("click",()=>{
 document.getElementById("quickAddBtn").addEventListener("click",()=>openAddModal(selected.size?[...selected].sort():[todayStr()]));
 
 /* ===== FILTERS / SORT ===== */
+document.getElementById("ownerFilters").querySelectorAll(".chip").forEach(chip=>{
+  chip.addEventListener("click",()=>{
+    sideOwner=chip.dataset.o;
+    document.querySelectorAll("#ownerFilters .chip").forEach(c=>c.classList.remove("active"));
+    chip.classList.add("active"); renderSide();
+  });
+});
 document.getElementById("filters").querySelectorAll(".chip").forEach(chip=>{
   chip.addEventListener("click",()=>{
     sideFilter=chip.dataset.f;
