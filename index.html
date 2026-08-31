@@ -1603,7 +1603,8 @@ function renderDayBody(){
         right=`<span class="d2tag done" style="display:inline-flex;align-items:center;gap:5px">`
             + `${whoChips(bd.length?bd.map(x=>x.name):(st.by?[st.by]:[]))}完了`
             + (wt?`　⏱<span class="num">${wt}</span>`:(st.d?` <span class="num">${hhmm(st.d)}</span>`:""))
-            + `</span>`;
+            + `</span>`
+            + `<button class="d2go" data-go="${t.id}" title="完了を外して、続きの作業に入る">＋参加</button>`;
       } else if(st.s==="doing"){
         const mine=myWorkState(st);
         right=`<span class="d2tag doing" data-el="${t.id}" style="display:inline-flex;align-items:center;gap:5px">`
@@ -1740,7 +1741,8 @@ function drawTaskPop(){
         + `<div class="popfact"><span class="k">完了</span><b>${st.d?`<span class="num">${hhmm(st.d)}</span>`:"—"}${st.by?"　"+esc(st.by):""}</b></div>`
         + (wt?`<div class="popfact"><span class="k">作業時間の合計</span><b class="num" style="color:var(--done)">${wt}</b></div>`:"")
         + bdBlock;
-    act=`<button class="popact" data-act="back">未着手に戻す</button>`;
+    act=`<button class="popact go" data-act="go">＋ 作業を再開する（自分が加わる）</button>`
+      + `<button class="popact" data-act="back">未着手に戻す</button>`;
   } else if(st.s==="doing"){
     tag=`<span class="d2tag doing">対応中</span>`;
     facts=startLine
