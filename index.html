@@ -675,6 +675,32 @@
   .popact.fin { background:var(--done); border-color:var(--done); color:#fff; font-weight:700; }
   .popact.fin:hover { filter:brightness(1.06); }
   .popact.go { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:700; }
+  /* さかのぼり入力・続きの確認パネル */
+  .askbox { margin-top:12px; padding:13px; border-radius:10px; background:#f5f8ff; border:1px solid #c5d7ff; }
+  .askdone { font-size:13px; font-weight:700; margin-bottom:3px; }
+  .askq { font-size:12.5px; color:#4a5464; margin-bottom:10px; }
+  .askrow { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+  .askrow.sub { margin-top:9px; font-size:12.5px; color:#4a5464; }
+  .askrow input[type=number] {
+    width:88px; border:1px solid var(--border); border-radius:8px; padding:8px 9px;
+    font-family:inherit; font-size:14px; color:var(--text); text-align:right;
+  }
+  .askrow input[type=date] {
+    border:1px solid var(--border); border-radius:7px; padding:6px 8px;
+    font-family:inherit; font-size:12.5px; color:var(--text);
+  }
+  .askrow .unit { font-size:12.5px; color:#4a5464; }
+  .askb {
+    font:inherit; font-size:12.5px; padding:9px 12px; border-radius:8px;
+    border:1px solid var(--border); background:#fff; color:var(--text); cursor:pointer; flex:1; min-width:110px;
+  }
+  .askb.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
+  .askb:hover { filter:brightness(.97); }
+  /* 繰り越しで作られたタスクの印 */
+  .carry-badge {
+    font-size:9.5px; font-weight:700; color:#3b6fd6; background:#e8f0fe;
+    border:1px solid #c5d7ff; border-radius:4px; padding:0 5px; flex:none; margin-left:4px;
+  }
 
   .own-row { display:flex; gap:6px; flex-wrap:wrap; }
   .own-btn {
@@ -998,6 +1024,7 @@ function normalizeTask(t){
   if (t.note === undefined)        t.note = "";
   if (t.processedBy === undefined) t.processedBy = "";
   if (t.owner === undefined)       t.owner = "";          // "" = 共通 / F / S / T
+  if (t.carriedFrom === undefined) t.carriedFrom = "";    // 繰り越し元のタスクid
   if (t.order !== undefined && typeof t.order !== "number") t.order = Number(t.order)||0;
   if (!t.dayLog || typeof t.dayLog !== "object" || Array.isArray(t.dayLog)) t.dayLog = {};
   return t;
@@ -1062,6 +1089,7 @@ function fmtDate(s){
   const d=parse(s),w=DOWS[d.getDay()];
   return `${d.getMonth()+1}/${d.getDate()}(${w})`;
 }
+function fmtMD(s){ const d=parse(s); return `${d.getMonth()+1}/${d.getDate()}(${DOWS[d.getDay()]})`; }
 function fmtDateLong(s){
   const d=parse(s),w=DOWS[d.getDay()];
   return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日(${w})`;
@@ -1208,12 +1236,49 @@ function finishMine(t, ds){
   }
   setDayState(t, ds, next);
 }
+/* ===== 続きを別の日へ（2026-09-05 追加） =====
+   指定した日に新しいタスクを作る。名前・メモ・色・担当者は引き継ぐ。
+   carriedFrom で元のタスクと繋いでおき、通算時間をたどれるようにする。 */
+function carryOver(t, ds, newDate){
+  if(!newDate) return null;
+  finishMine(t, ds);                       // まず今日の分を締める
+  if(isRecur(t)) return null;              // 繰り返しは元から翌日に出るので作らない
+  const nt={
+    id:uid(), name:t.name, note:t.note||"", owner:t.owner||"",
+    color:t.color||"", status:"todo",
+    dates:[newDate], daysOfWeek:[], completedDates:[], skipDates:[], dayLog:{},
+    carriedFrom:t.id,
+    order:tasks.reduce((m,x)=>Math.max(m,x.order||0),0)+1
+  };
+  tasks.push(normalizeTask(nt));
+  return nt;
+}
+/* 繰り越しの鎖をたどって、これまでの合計を出す */
+function totalMs(t){
+  let sum=0, cur=t, guard=0;
+  while(cur && guard++<50){
+    Object.keys(cur.dayLog||{}).forEach(d=>{ sum+=elapsedMs(dayState(cur,d)); });
+    cur = cur.carriedFrom ? tasks.find(x=>x.id===cur.carriedFrom) : null;
+  }
+  return sum;
+}
+/* このタスクが繰り越しで作られたものか */
+function isCarried(t){ return !!t.carriedFrom; }
+
 function myWorkState(st){
   const w=whoMap(st), me=myName||"—";
   return (w[me]&&w[me].s)||"todo";
 }
 function startDay(t, ds){
   applyWho(t, ds, myName||"—", p=>({ s:"doing", a:Date.now(), acc:p.acc||0 }));
+}
+/* 開始を押し忘れたとき用。◯分前から作業していたことにして始める */
+function startDayBack(t, ds, minutes){
+  const m=Math.max(0, Math.min(1440, Math.round(Number(minutes)||0)));
+  applyWho(t, ds, myName||"—", p=>({ s:"doing", a:Date.now(), acc:(p.acc||0)+m*60000 }));
+  /* 開始時刻もさかのぼらせる */
+  const st=dayState(t,ds);
+  if(st.s0) setDayState(t, ds, { s0: st.s0-m*60000 });
 }
 function pauseDay(t, ds){
   const me=myName||"—";
@@ -1392,8 +1457,9 @@ function periodDates(){
     const n=new Date(y,m+1,0).getDate();
     for(let i=1;i<=n;i++) out.push(new Date(y,m,i));
   } else {
-    const dow=(viewDate.getDay()+6)%7;   // 月曜=0
-    const s=new Date(viewDate.getFullYear(),viewDate.getMonth(),viewDate.getDate()-dow);
+    /* 基準日（ふだんは今日）が真ん中に来るように、前後3日ずつの7日間を出す。
+       月曜はじまりだと人によって今日の位置が変わってしまうため。 */
+    const s=new Date(viewDate.getFullYear(),viewDate.getMonth(),viewDate.getDate()-3);
     for(let i=0;i<7;i++) out.push(new Date(s.getFullYear(),s.getMonth(),s.getDate()+i));
   }
   return out;
@@ -1486,7 +1552,7 @@ function renderCalendar(){
     g.className="mlist";
     g.innerHTML=html;
     bindGrid(g);
-    const w=jumpTarget||(viewMode==="month"?tStr:null);
+    const w=jumpTarget||tStr;
     if(w){
       const h=g.querySelector(`.mhead[data-date="${w}"]`);
       const card=h?h.closest(".mday"):null;
@@ -1527,8 +1593,8 @@ function renderCalendar(){
   grid.className="ogrid";
   grid.innerHTML=html;
   bindGrid(grid);
-  /* 指定した日があればそこへ、なければ今日の行へスクロールする */
-  const want=jumpTarget||(viewMode==="month"?tStr:null);
+  /* 指定した日があればそこへ、なければ今日の行へスクロールする（週でも月でも同じ） */
+  const want=jumpTarget||tStr;
   if(want){
     const sel=mobileMode?`.mhead[data-date="${want}"]`:`.odate[data-date="${want}"]`;
     const cell=grid.querySelector(sel);
@@ -1628,7 +1694,8 @@ function renderDayBody(){
         const u=urgency(t);
         if(u==="overdue") warn=`<span class="badge overdue">期限切れ</span>`;
       }
-      const rc=isRecur(t)?`<div class="d2sub">🔁 ${fmtDows(t.daysOfWeek)}</div>`:"";
+      const rc=isRecur(t)?`<div class="d2sub">🔁 ${fmtDows(t.daysOfWeek)}</div>`
+              :(isCarried(t)?`<div class="d2sub">📅 前の日からの続き　通算 ${fmtElapsedShort(totalMs(t))}</div>`:"");
       return `<div class="d2row" data-rid="${t.id}">
         <div class="d2top">
           <span class="ord">
@@ -1640,6 +1707,7 @@ function renderDayBody(){
           </span>
           ${avHtml(t)}
           <button class="d2name${st.s==="done"?" off":""}" data-open="${t.id}">${esc(t.name)}</button>
+          ${isCarried(t)?`<span class="carry-badge">続き</span>`:""}
           ${warn}${right}
         </div>${bdLine}${rc}
       </div>`;
@@ -1707,14 +1775,17 @@ document.getElementById("dayModalBody").addEventListener("click",e=>{
 });
 /* ===== タスク詳細ポップ（2026-08-18 追加） ===== */
 let popId=null, popDate="";
+let popBack=false;   // 「さかのぼって開始」の入力欄を出しているか
+let popAsk=null;     // 作業を終えた直後の確認パネル { who, ms, date }
 function openTaskPop(id, ds){
   const t=tasks.find(x=>x.id===id); if(!t) return;
   popId=id; popDate=ds||currentDay||todayStr();
+  popBack=false; popAsk=null;
   drawTaskPop();
   document.getElementById("popOverlay").classList.add("open");
 }
 function closeTaskPop(){
-  popId=null;
+  popId=null; popBack=false; popAsk=null;
   const ov=document.getElementById("popOverlay");
   ov.classList.remove("open"); ov.innerHTML="";
 }
@@ -1739,7 +1810,8 @@ function drawTaskPop(){
     const wt=workTime(st);
     facts=startLine
         + `<div class="popfact"><span class="k">完了</span><b>${st.d?`<span class="num">${hhmm(st.d)}</span>`:"—"}${st.by?"　"+esc(st.by):""}</b></div>`
-        + (wt?`<div class="popfact"><span class="k">作業時間の合計</span><b class="num" style="color:var(--done)">${wt}</b></div>`:"")
+        + (wt?`<div class="popfact"><span class="k">この日の作業</span><b class="num" style="color:var(--done)">${wt}</b></div>`:"")
+        + (isCarried(t)?`<div class="popfact"><span class="k">通算</span><b class="num">${fmtElapsed(totalMs(t))}</b></div>`:"")
         + bdBlock;
     act=`<button class="popact go" data-act="go">＋ 作業を再開する（自分が加わる）</button>`
       + `<button class="popact" data-act="back">未着手に戻す</button>`;
@@ -1765,12 +1837,38 @@ function drawTaskPop(){
   } else {
     tag=`<span class="d2tag todo">未着手</span>`;
     facts=`<div class="popfact"><span class="k">作業開始</span><b style="font-weight:400;color:var(--muted)">まだ押していません</b></div>`;
-    act=`<button class="popact" data-act="go">作業開始</button>`;
+    act=`<button class="popact" data-act="go">作業開始</button>`
+      + (popBack
+         ? `<div class="askbox">
+              <div class="askq">何分前から作業していましたか？</div>
+              <div class="askrow">
+                <input type="number" id="backMin" min="1" max="1440" step="1" placeholder="40" autofocus>
+                <span class="unit">分前</span>
+                <button class="askb primary" data-act="backgo">開始する</button>
+                <button class="askb" data-act="backno">やめる</button>
+              </div>
+            </div>`
+         : `<button class="popact" data-act="backopen">⏱ さかのぼって開始</button>`);
+  }
+  /* 作業を終えたあとに1回だけ聞く（案2） */
+  if(popAsk){
+    const total=totalMs(t);
+    act=`<div class="askbox">
+           <div class="askdone">${esc(popAsk.who)} の作業を終えました（${fmtElapsedShort(popAsk.ms)}）</div>
+           <div class="askq">続きはありますか？</div>
+           <div class="askrow">
+             <button class="askb" data-act="askend">今日で終わり</button>
+             <button class="askb primary" data-act="askcarry">続きは <span id="carryLabel">${fmtMD(popAsk.date)}</span> にする</button>
+           </div>
+           <div class="askrow sub">別の日にする<input type="date" id="carryDate" value="${popAsk.date}"></div>
+         </div>`;
+    facts=`<div class="popfact"><span class="k">この日の作業</span><b class="num" style="color:var(--done)">${fmtElapsed(elapsedMs(st))}</b></div>`
+        + (total>elapsedMs(st)?`<div class="popfact"><span class="k">通算</span><b class="num">${fmtElapsed(total)}</b></div>`:"");
   }
   const rc=isRecur(t)?`<div class="popfact"><span class="k">繰り返し</span><b>${fmtDows(t.daysOfWeek)}</b></div>`:"";
   document.getElementById("popOverlay").innerHTML=
    `<div class="pop">
-      <div class="pophead">${avHtml(t)}<h4>${esc(t.name)}</h4>${tag}
+      <div class="pophead">${avHtml(t)}<h4>${esc(t.name)}${isCarried(t)?`<span class="carry-badge">続き</span>`:""}</h4>${tag}
         <button class="m-close" data-x="1">✕</button>
       </div>
       <div class="popnote">${t.note?esc(t.note):"（メモはありません）"}</div>
@@ -1787,16 +1885,66 @@ document.getElementById("popOverlay").addEventListener("click",e=>{
   const t=tasks.find(x=>x.id===popId); if(!t) return;
   const k=a.dataset.act;
   if(k==="edit"){ const id=t.id; closeTaskPop(); closeDayModal(); openEditModal(id); return; }
+
+  /* さかのぼって開始 */
+  if(k==="backopen"){ popBack=true; drawTaskPop(); const f=document.getElementById("backMin"); if(f) f.focus(); return; }
+  if(k==="backno"){   popBack=false; drawTaskPop(); return; }
+  if(k==="backgo"){
+    const f=document.getElementById("backMin");
+    const m=Number(f&&f.value);
+    if(!m||m<1){ if(f){ f.focus(); f.style.borderColor="var(--overdue)"; } return; }
+    popBack=false; startDayBack(t,popDate,m);
+  }
+  /* 作業を終えたあとの「続きはありますか？」 */
+  if(k==="askend"){ popAsk=null; drawTaskPop(); return; }
+  if(k==="askcarry"){
+    const dv=document.getElementById("carryDate");
+    const nd=dv&&dv.value;
+    if(!nd){ if(dv) dv.focus(); return; }
+    popAsk=null;
+    carryOver(t,popDate,nd);
+    try{save();}catch(ex){console.error(ex);}
+    renderCalendar(); renderSide(); renderSummary();
+    if(document.getElementById("dayOverlay").classList.contains("open")) renderDayBody();
+    closeTaskPop();
+    return;
+  }
+
   if(k==="go")     startDay(t,popDate);
   if(k==="pause")  pauseDay(t,popDate);
   if(k==="resume") resumeDay(t,popDate);
-  if(k==="mine")   finishMine(t,popDate);
+  if(k==="mine"){
+    /* 先に自分の時間を確定させてから、続きの有無を聞く */
+    const before=dayState(t,popDate);
+    const me=myName||"—";
+    const mine=(whoMap(before)[me]);
+    const ms=mine?pElapsed(mine):0;
+    finishMine(t,popDate);
+    if(!isRecur(t)){
+      const nx=new Date(parse(popDate).getFullYear(),parse(popDate).getMonth(),parse(popDate).getDate()+1);
+      popAsk={ who:me, ms:ms, date:ymd(nx) };
+    }
+  }
   if(k==="done")   finishDay(t,popDate);
   if(k==="back")   resetDay(t,popDate);
   try{save();}catch(ex){console.error(ex);}
   renderCalendar(); renderSide(); renderSummary();
   if(document.getElementById("dayOverlay").classList.contains("open")) renderDayBody();
   drawTaskPop();
+});
+/* 繰り越し先の日付を変えたら、ボタンの文字も合わせる */
+document.getElementById("popOverlay").addEventListener("input",e=>{
+  if(e.target.id==="carryDate"){
+    const lb=document.getElementById("carryLabel");
+    if(lb&&e.target.value) lb.textContent=fmtMD(e.target.value);
+    if(popAsk&&e.target.value) popAsk.date=e.target.value;
+  }
+  if(e.target.id==="backMin") e.target.style.borderColor="";
+});
+document.getElementById("popOverlay").addEventListener("keydown",e=>{
+  if(e.target.id==="backMin"&&e.key==="Enter"){
+    const b=document.querySelector('#popOverlay [data-act="backgo"]'); if(b) b.click();
+  }
 });
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&popId) closeTaskPop(); });
 
@@ -2129,7 +2277,7 @@ function renderSide(){
     return `<div class="task-card ${u||t.status} ${rc?"recur":""} ${isManual?"sortable":""}" data-id="${t.id}"${cardStyle}>
       <span class="drag-handle" title="ドラッグして並び替え">⠿</span>
       <div class="task-card-body">
-        <div class="tname" style="display:flex;align-items:center;gap:7px">${avHtml(t,true)}<span>${esc(t.name)}</span></div>
+        <div class="tname" style="display:flex;align-items:center;gap:7px">${avHtml(t,true)}<span>${esc(t.name)}</span>${isCarried(t)?`<span class="carry-badge">続き</span>`:""}</div>
         <div class="tmeta">
           <span class="badge ${t.status}">${SL[t.status]}${t.processedBy&&t.status!=="todo"?" "+esc(t.processedBy):""}</span>
           ${dateStr?`<span>🗓 ${esc(dateStr)}</span>`:""}
