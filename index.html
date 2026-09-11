@@ -738,7 +738,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.07</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.11-2</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -1030,6 +1030,7 @@ function normalizeTask(t){
   if (t.processedBy === undefined) t.processedBy = "";
   if (t.owner === undefined)       t.owner = "";          // "" = 共通 / F / S / T
   if (t.carriedFrom === undefined) t.carriedFrom = "";    // 繰り越し元のタスクid
+  if (t.carriedDate === undefined) t.carriedDate = "";    // 繰り越し元の日付
   if (t.order !== undefined && typeof t.order !== "number") t.order = Number(t.order)||0;
   if (!t.dayLog || typeof t.dayLog !== "object" || Array.isArray(t.dayLog)) t.dayLog = {};
   return t;
@@ -1246,26 +1247,51 @@ function finishMine(t, ds){
    carriedFrom で元のタスクと繋いでおき、通算時間をたどれるようにする。 */
 function carryOver(t, ds, newDate){
   if(!newDate) return null;
-  finishMine(t, ds);                       // まず今日の分を締める
-  if(isRecur(t)) return null;              // 繰り返しは元から翌日に出るので作らない
+  if(myWorkState(dayState(t,ds))!=="done") finishMine(t, ds);   // まだなら今日の分を締める
+  /* 繰り返しタスクでも、続きは単発のタスクとして指定日に作る */
   const nt={
     id:uid(), name:t.name, note:t.note||"", owner:t.owner||"",
     color:t.color||"", status:"todo",
     dates:[newDate], daysOfWeek:[], completedDates:[], skipDates:[], dayLog:{},
-    carriedFrom:t.id,
+    carriedFrom:t.id, carriedDate:ds,
     order:tasks.reduce((m,x)=>Math.max(m,x.order||0),0)+1
   };
   tasks.push(normalizeTask(nt));
   return nt;
 }
-/* 繰り越しの鎖をたどって、これまでの合計を出す */
+/* 自分の作業を終えて、「続きはありますか？」の中身を用意する */
+function finishAndAsk(t, ds){
+  const me=myName||"—";
+  const mine=whoMap(dayState(t,ds))[me];
+  const ms=mine?pElapsed(mine):0;
+  finishMine(t, ds);
+  const d=parse(ds);
+  return { who:me, ms:ms, date:ymd(new Date(d.getFullYear(),d.getMonth(),d.getDate()+1)) };
+}
+/* 繰り越しの鎖をたどって、これまでの合計を出す。
+   元が繰り返しタスクのときは、繰り越した日の分だけを数える（毎日の記録を全部足さないため） */
 function totalMs(t){
-  let sum=0, cur=t, guard=0;
+  let sum=0, cur=t, onlyDate=null, guard=0;
   while(cur && guard++<50){
-    Object.keys(cur.dayLog||{}).forEach(d=>{ sum+=elapsedMs(dayState(cur,d)); });
+    if(onlyDate && isRecur(cur)) sum+=elapsedMs(dayState(cur,onlyDate));
+    else Object.keys(cur.dayLog||{}).forEach(d=>{ sum+=elapsedMs(dayState(cur,d)); });
+    onlyDate = cur.carriedDate || null;
     cur = cur.carriedFrom ? tasks.find(x=>x.id===cur.carriedFrom) : null;
   }
   return sum;
+}
+/* 対応中なのに作業の記録がない（編集画面で進行中にしただけ等） */
+function untracked(st){ return st.s==="doing" && !workers(st).length; }
+/* 編集画面で進捗ステータスを変えたとき、今日の作業記録も合わせる */
+function syncStatusToday(t, prev){
+  const want=t.status; if(want===prev) return;
+  const ds=todayStr();
+  if(!getDayAllTasks(ds).some(x=>x.id===t.id)) return;
+  const L=t.dayLog&&t.dayLog[ds];
+  const cur=L ? L.s : (isRecur(t) ? (isDayCompleted(t,ds)?"done":"todo") : prev);
+  if(want==="doing" && cur!=="doing") startDay(t,ds);
+  else if(want==="done" && cur!=="done") finishDay(t,ds);
+  else if(want==="todo" && cur!=="todo") resetDay(t,ds);
 }
 /* このタスクが繰り越しで作られたものか */
 function isCarried(t){ return !!t.carriedFrom; }
@@ -1462,9 +1488,9 @@ function periodDates(){
     const n=new Date(y,m+1,0).getDate();
     for(let i=1;i<=n;i++) out.push(new Date(y,m,i));
   } else {
-    /* 基準日（ふだんは今日）が真ん中に来るように、前後3日ずつの7日間を出す。
-       月曜はじまりだと人によって今日の位置が変わってしまうため。 */
-    const s=new Date(viewDate.getFullYear(),viewDate.getMonth(),viewDate.getDate()-3);
+    /* 月曜はじまりの7日間。今日の行へは描画後に自動でスクロールする */
+    const dow=(viewDate.getDay()+6)%7;   // 月曜=0
+    const s=new Date(viewDate.getFullYear(),viewDate.getMonth(),viewDate.getDate()-dow);
     for(let i=0;i<7;i++) out.push(new Date(s.getFullYear(),s.getMonth(),s.getDate()+i));
   }
   return out;
@@ -1493,7 +1519,10 @@ function pillHtml(t, ds){
   let eltime="", hint=`${esc(t.name)}（クリックで詳細）`;
   const bd=breakdown(st);
   const bdText=bd.map(x=>`${x.name} ${fmtElapsedShort(x.ms)}${x.doing?"（作業中）":""}`).join("・");
-  if(st.s==="doing"){
+  if(untracked(st)){
+    eltime=`<span class="pill-el">対応中（未計測）</span>`;
+    hint=`${esc(t.name)}／対応中ですが作業開始が押されていません`;
+  } else if(st.s==="doing"){
     /* 同時に動いている人の丸を並べて、誰がやっているか分かるようにする */
     const act=activeWorkers(st);
     eltime=`<span class="pill-el" data-cel="${t.id}" data-cdate="${ds}">${whoChips(act)}対応中 ${fmtElapsedShort(elapsedMs(st))}</span>`;
@@ -1676,6 +1705,9 @@ function renderDayBody(){
             + (wt?`　⏱<span class="num">${wt}</span>`:(st.d?` <span class="num">${hhmm(st.d)}</span>`:""))
             + `</span>`
             + `<button class="d2go" data-go="${t.id}" title="完了を外して、続きの作業に入る">＋参加</button>`;
+      } else if(untracked(st)){
+        right=`<span class="d2tag doing">対応中（未計測）</span>`
+            + `<button class="d2go" data-go="${t.id}" title="ここから時間を計り始める">作業開始</button>`;
       } else if(st.s==="doing"){
         const mine=myWorkState(st);
         right=`<span class="d2tag doing" data-el="${t.id}" style="display:inline-flex;align-items:center;gap:5px">`
@@ -1761,7 +1793,16 @@ document.getElementById("dayModalBody").addEventListener("click",e=>{
     const el=ps||rs||mn;
     const id=el.dataset.pause||el.dataset.resume||el.dataset.mine;
     const t=tasks.find(x=>x.id===id); if(!t) return;
-    if(ps) pauseDay(t,currentDay); else if(rs) resumeDay(t,currentDay); else finishMine(t,currentDay);
+    if(mn){
+      /* 行の「✓ 自分」からでも、ポップを開いて続きの有無を聞く */
+      const ask=finishAndAsk(t,currentDay);
+      try{save();}catch(ex){console.error(ex);}
+      renderCalendar(); renderSide(); renderSummary(); renderDayBody();
+      openTaskPop(id,currentDay);
+      popAsk=ask; drawTaskPop();
+      return;
+    }
+    if(ps) pauseDay(t,currentDay); else resumeDay(t,currentDay);
     try{save();}catch(ex){console.error(ex);}
     renderCalendar(); renderSide(); renderSummary(); renderDayBody();
     if(popId===id) drawTaskPop();
@@ -1820,6 +1861,23 @@ function drawTaskPop(){
         + bdBlock;
     act=`<button class="popact go" data-act="go">＋ 作業を再開する（自分が加わる）</button>`
       + `<button class="popact" data-act="back">未着手に戻す</button>`;
+  } else if(untracked(st)){
+    /* 進行中にはなっているが、作業開始が押されていない */
+    tag=`<span class="d2tag doing">対応中</span>`;
+    facts=`<div class="popfact"><span class="k">作業開始</span><b style="font-weight:400;color:var(--muted)">まだ押していません（時間は計っていません）</b></div>`;
+    act=`<button class="popact go" data-act="go">作業開始（ここから計る）</button>`
+      + (popBack
+         ? `<div class="askbox">
+              <div class="askq">何分前から作業していましたか？</div>
+              <div class="askrow">
+                <input type="number" id="backMin" min="1" max="1440" step="1" placeholder="40" autofocus>
+                <span class="unit">分前</span>
+                <button class="askb primary" data-act="backgo">開始する</button>
+                <button class="askb" data-act="backno">やめる</button>
+              </div>
+            </div>`
+         : `<button class="popact" data-act="backopen">⏱ さかのぼって開始</button>`)
+      + `<button class="popact fin" data-act="done">タスクを完了にする</button>`;
   } else if(st.s==="doing"){
     tag=`<span class="d2tag doing">対応中</span>`;
     facts=startLine
@@ -1868,7 +1926,7 @@ function drawTaskPop(){
            <div class="askrow sub">別の日にする<input type="date" id="carryDate" value="${popAsk.date}"></div>
          </div>`;
     facts=`<div class="popfact"><span class="k">この日の作業</span><b class="num" style="color:var(--done)">${fmtElapsed(elapsedMs(st))}</b></div>`
-        + (total>elapsedMs(st)?`<div class="popfact"><span class="k">通算</span><b class="num">${fmtElapsed(total)}</b></div>`:"");
+        + (isCarried(t)&&total>elapsedMs(st)?`<div class="popfact"><span class="k">通算</span><b class="num">${fmtElapsed(total)}</b></div>`:"");
   }
   const rc=isRecur(t)?`<div class="popfact"><span class="k">繰り返し</span><b>${fmtDows(t.daysOfWeek)}</b></div>`:"";
   document.getElementById("popOverlay").innerHTML=
@@ -1919,16 +1977,8 @@ document.getElementById("popOverlay").addEventListener("click",e=>{
   if(k==="pause")  pauseDay(t,popDate);
   if(k==="resume") resumeDay(t,popDate);
   if(k==="mine"){
-    /* 先に自分の時間を確定させてから、続きの有無を聞く */
-    const before=dayState(t,popDate);
-    const me=myName||"—";
-    const mine=(whoMap(before)[me]);
-    const ms=mine?pElapsed(mine):0;
-    finishMine(t,popDate);
-    if(!isRecur(t)){
-      const nx=new Date(parse(popDate).getFullYear(),parse(popDate).getMonth(),parse(popDate).getDate()+1);
-      popAsk={ who:me, ms:ms, date:ymd(nx) };
-    }
+    /* 先に自分の時間を確定させてから、続きの有無を聞く（繰り返しタスクでも聞く） */
+    popAsk=finishAndAsk(t,popDate);
   }
   if(k==="done")   finishDay(t,popDate);
   if(k==="back")   resetDay(t,popDate);
@@ -2137,7 +2187,11 @@ document.getElementById("saveBtn").addEventListener("click",()=>{
   const payload={ name, dates:modalDates.slice(), daysOfWeek:modalDows.slice(), color:modalColor, owner:modalOwner, status:document.getElementById("fStatus").value, note:document.getElementById("fNote").value.trim() };
   if(editingId){
     const idx=tasks.findIndex(x=>x.id===editingId);
-    if(idx!==-1) tasks[idx]={ ...tasks[idx], ...payload }; // completedDates / dayLog を保持
+    if(idx!==-1){
+      const prev=tasks[idx].status;
+      tasks[idx]={ ...tasks[idx], ...payload }; // completedDates / dayLog を保持
+      syncStatusToday(tasks[idx], prev);        // 進行中にしたら今日の時計も動かす
+    }
   } else {
     const maxOrd=tasks.reduce((m,t)=>Math.max(m,t.order||0),0);
     tasks.push({ id:uid(), completedDates:[], dayLog:{}, order:maxOrd+1, ...payload });
