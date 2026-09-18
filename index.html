@@ -679,6 +679,30 @@
   .popact.fin { background:var(--done); border-color:var(--done); color:#fff; font-weight:700; }
   .popact.fin:hover { filter:brightness(1.06); }
   .popact.go { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:700; }
+  /* F出勤カレンダー */
+  .att-pop { max-width:400px; }
+  .att-head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .att-t { flex:1; text-align:center; font-size:15px; font-weight:700; }
+  .att-nav {
+    font:inherit; border:1px solid var(--border); background:#fff; border-radius:7px;
+    width:32px; height:30px; cursor:pointer; color:var(--muted);
+  }
+  .att-nav:hover { border-color:var(--accent); color:var(--accent); }
+  .att-sub { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); margin-bottom:10px; }
+  .att-sub b { color:var(--text); font-size:14px; }
+  .att-row { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-bottom:4px; align-items:center; }
+  .att-dows span { text-align:center; font-size:11px; color:var(--muted); font-weight:600; }
+  .att-dows .sat { color:var(--accent); } .att-dows .sun { color:#c83030; }
+  .att-d {
+    font:inherit; font-size:13px; height:38px; border-radius:8px; border:1px solid var(--border);
+    background:#fff; color:var(--text); cursor:pointer; font-variant-numeric:tabular-nums; padding:0;
+  }
+  .att-d.sat { color:var(--accent); } .att-d.sun { color:#c83030; }
+  .att-d.out { opacity:.35; }
+  .att-d.today { box-shadow:inset 0 0 0 2px var(--accent); }
+  .att-d:hover { border-color:#2f6fd0; }
+  .att-d.on { background:#2f6fd0; border-color:#2f6fd0; color:#fff; font-weight:700; }
+  .att-hint { font-size:11.5px; color:var(--muted); margin-top:8px; line-height:1.6; }
   /* さかのぼり入力・続きの確認パネル */
   .askbox { margin-top:12px; padding:13px; border-radius:10px; background:#f5f8ff; border:1px solid #c5d7ff; }
   .askdone { font-size:13px; font-weight:700; margin-bottom:3px; }
@@ -738,7 +762,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.11-2</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.18-2</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -792,6 +816,7 @@
       </span>
       <button class="nav-btn" id="jumpBtn" title="カレンダーから日付を選ぶ">📅 日付へ移動</button>
       <button class="nav-btn" id="mobileToggle" title="スマホ向けの表示に切り替え">📱 スマホ</button>
+      <button class="nav-btn" id="attendBtn" title="Fさんの出勤日を見る・つける">🗓 F出勤カレンダー</button>
       <span class="nav-spacer"></span>
       <span class="sel-hint" id="selHint"></span>
       <button class="nav-btn routine" id="routineBtn" title="ルーチン業務を一括登録">📋 ルーチン</button>
@@ -948,6 +973,9 @@
 <!-- タスク詳細ポップ -->
 <div class="pop-ov" id="popOverlay"></div>
 
+<!-- F出勤カレンダー -->
+<div class="pop-ov" id="attOverlay"><div class="pop att-pop" id="attBox"></div></div>
+
 <!-- 日付へ移動：1か月のカレンダー -->
 <div class="mp-ov" id="mpOverlay"><div class="mp" id="mp"></div></div>
 
@@ -1012,6 +1040,8 @@ let fbDb = null, tasksRef = null;
 let myName = "";                 // F / S / T
 let _lastSaved = {};             // id -> JSON文字列（差分の判定用）
 let _applyingRemote = false;     // 受信を反映している最中は保存しない
+const ATT_ID   = "__attendance_F";                          // 出勤カレンダー用の特別な1件
+const ATT_NAME = "F出勤カレンダーのデータ（消さないでください）";
 
 /* Firebaseは空配列を保存できず消えるので、読み出し時に必ず配列へ戻す */
 function toArr(v){
@@ -1068,12 +1098,14 @@ function startSync(){
   tasksRef.on("value", snap => {
     const v = snap.val() || {};
     _applyingRemote = true;
-    tasks = Object.keys(v).map(id => normalizeTask(Object.assign({}, v[id], { id: id })));
+    tasks = splitRemote(v);   // 出勤カレンダー用の1件はよけて、残りをタスクとして読む
     ensureOrders();
     tasks.sort(byOrder);
     _lastSaved = {};
     tasks.forEach(t => { _lastSaved[t.id] = JSON.stringify(t); });
     _applyingRemote = false;
+    /* 前の日から動きっぱなしの時計があれば止めて保存する */
+    if (autoPauseStale()) { try { save(); } catch (e) { console.error(e); } }
     renderAll();
   }, err => {
     console.error(err);
@@ -1433,9 +1465,9 @@ function whoChips(names){ return (names||[]).map(whoChip).join(""); }
 function breakdown(st){
   const w=whoMap(st);
   return workers(st).map(n=>({ name:n, ms:pElapsed(w[n]),
-    doing:w[n].s==="doing", done:w[n].s==="done" }));
+    doing:w[n].s==="doing", done:w[n].s==="done", auto:!!w[n].auto }));
 }
-function pLabel(x){ return x.doing?"作業中":(x.done?"完了":"中断"); }
+function pLabel(x){ return x.doing?"作業中":(x.done?"完了":(x.auto?"自動中断":"中断")); }
 
 /* ===== DATE MAP ===== */
 function buildDateMap(calStart){
@@ -2003,6 +2035,117 @@ document.getElementById("popOverlay").addEventListener("keydown",e=>{
 });
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&popId) closeTaskPop(); });
 
+/* ===== 日付をまたいだ時計の自動中断（2026-09-18 追加） =====
+   終える操作を忘れて帰ると、時計が翌日まで動き続けてしまう。
+   前の日以前に「作業中」のまま残っている人は、その日の業務終了時刻で止める。
+   （業務終了より後に始めていた場合は、始めた時刻で止める＝時間を足さない） */
+const WORK_END_HOUR=19;
+function autoPauseStale(){
+  const today=todayStr(); let changed=false;
+  tasks.forEach(t=>{
+    Object.keys(t.dayLog||{}).forEach(ds=>{
+      if(ds>=today) return;
+      const st=dayState(t,ds), w=whoMap(st), nw={};
+      let hit=false;
+      Object.keys(w).forEach(n=>{
+        const p=w[n];
+        if(p.s==="doing"&&p.a){
+          const d=parse(ds);
+          const end=new Date(d.getFullYear(),d.getMonth(),d.getDate(),WORK_END_HOUR,0,0).getTime();
+          const cap=Math.max(Number(p.a), end);
+          nw[n]={ s:"paused", a:0, acc:(Number(p.acc)||0)+Math.max(0,cap-Number(p.a)), auto:1 };
+          hit=true;
+        } else nw[n]=p;
+      });
+      if(!hit) return;
+      const next={ who:nw, acc:0, a:0 };
+      next.s=rollUp(Object.assign({}, st, next));
+      setDayState(t, ds, next);
+      changed=true;
+    });
+  });
+  return changed;
+}
+/* 開いたまま日付が変わったときにも止める */
+let _lastDay=todayStr();
+setInterval(()=>{
+  if(todayStr()===_lastDay) return;
+  _lastDay=todayStr();
+  if(autoPauseStale()){ try{save();}catch(e){console.error(e);} }
+  renderAll();
+},60000);
+
+/* ===== F出勤カレンダー（2026-09-18 追加） =====
+   出勤日をタップすると色が付く。もう一度タップで外れる。
+   タスクと同じ保存場所（tasks）に特別な1件 __attendance_F を置き、そこに出勤日をまとめる。
+   tasks は3人とも書き込めるので、データベースの権限設定を変えずに済む。
+   読み込み時にこの1件はよけるので、カレンダーやタスク一覧には出ない。 */
+let attend={};
+let attMonth=new Date();
+function splitRemote(v){
+  const raw=v[ATT_ID];
+  attend=(raw&&raw.days&&typeof raw.days==="object")?Object.assign({},raw.days):{};
+  if(document.getElementById("attOverlay").classList.contains("open")) drawAttend();
+  return Object.keys(v).filter(id=>id!==ATT_ID)
+    .map(id=>normalizeTask(Object.assign({}, v[id], { id:id })));
+}
+function openAttend(){ attMonth=new Date(); drawAttend(); document.getElementById("attOverlay").classList.add("open"); }
+function closeAttend(){ document.getElementById("attOverlay").classList.remove("open"); }
+function drawAttend(){
+  const y=attMonth.getFullYear(), m=attMonth.getMonth();
+  const first=new Date(y,m,1);
+  const start=new Date(y,m,1-((first.getDay()+6)%7));   // 月曜はじまり
+  const tStr=todayStr();
+  let rows="";
+  for(let w=0; w<6; w++){
+    let cells="", anyIn=false;
+    for(let i=0;i<7;i++){
+      const cur=new Date(start.getFullYear(),start.getMonth(),start.getDate()+w*7+i);
+      const ds=ymd(cur), inM=cur.getMonth()===m, on=!!attend[ds], dow=cur.getDay();
+      if(inM) anyIn=true;
+      cells+=`<button class="att-d${on?" on":""}${inM?"":" out"}${ds===tStr?" today":""}${dow===0?" sun":dow===6?" sat":""}" data-att="${ds}" title="${fmtDateLong(ds)}">${cur.getDate()}</button>`;
+    }
+    if(!anyIn) continue;
+    rows+=`<div class="att-row">${cells}</div>`;
+  }
+  document.getElementById("attBox").innerHTML=
+   `<div class="att-head">
+      <button class="att-nav" data-attnav="-1" title="前の月">◀</button>
+      <div class="att-t">${y}年 ${m+1}月</div>
+      <button class="att-nav" data-attnav="1" title="次の月">▶</button>
+      <button class="m-close" data-attx="1">✕</button>
+    </div>
+    <div class="att-sub"><span class="av av-sm av-F">F</span>F出勤カレンダー</div>
+    <div class="att-row att-dows">${["月","火","水","木","金","土","日"].map((d,i)=>`<span class="${i===5?"sat":i===6?"sun":""}">${d}</span>`).join("")}</div>
+    ${rows}
+    <div class="att-hint">出勤日をタップすると色が付きます。もう一度タップで外れます。</div>
+    <button class="popact" data-attx="1">閉じる</button>`;
+}
+function toggleAttend(ds){
+  const on=!attend[ds];
+  if(on) attend[ds]=true; else delete attend[ds];
+  drawAttend();
+  if(tasksRef){
+    const up={ name:ATT_NAME, kind:"attendance" };
+    up["days/"+ds]=on?true:null;            // null で送るとその日だけ消える
+    tasksRef.child(ATT_ID).update(up).catch(e=>{
+      console.error(e);
+      alert("出勤日を保存できませんでした。通信状態を確認してください。");
+    });
+  }
+}
+document.getElementById("attendBtn").addEventListener("click",openAttend);
+document.getElementById("attOverlay").addEventListener("click",e=>{
+  if(e.target===e.currentTarget||e.target.closest("[data-attx]")){ closeAttend(); return; }
+  const nv=e.target.closest("[data-attnav]");
+  if(nv){ attMonth=new Date(attMonth.getFullYear(),attMonth.getMonth()+Number(nv.dataset.attnav),1); drawAttend(); return; }
+  const d=e.target.closest("[data-att]");
+  if(d) toggleAttend(d.dataset.att);
+});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&document.getElementById("attOverlay").classList.contains("open")) closeAttend();
+});
+
 /* 対応中の経過時間を1秒ごとに進める */
 setInterval(()=>{
   document.querySelectorAll("[data-el]").forEach(el=>{
@@ -2481,6 +2624,8 @@ function applySide(){
   if(jb) jb.textContent = narrow ? "📅" : "📅 日付へ移動";
   const qa=document.getElementById("quickAddBtn");
   if(qa) qa.textContent = narrow ? "＋ 追加" : "＋ タスクを追加";
+  const ab=document.getElementById("attendBtn");
+  if(ab) ab.textContent = narrow ? "🗓F" : "🗓 F出勤カレンダー";
 }
 window.addEventListener("resize",()=>{ applySide(); });
 document.getElementById("mobileToggle").addEventListener("click",()=>{
