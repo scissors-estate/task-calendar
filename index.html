@@ -700,8 +700,9 @@
   .att-d.sat { color:var(--accent); } .att-d.sun { color:#c83030; }
   .att-d.out { opacity:.35; }
   .att-d.today { box-shadow:inset 0 0 0 2px var(--accent); }
-  .att-d:hover { border-color:#2f6fd0; }
-  .att-d.on { background:#2f6fd0; border-color:#2f6fd0; color:#fff; font-weight:700; }
+  .att-d:hover { border-color:#f0cf4f; }
+  /* 出勤日の色（ここを変えれば色が変わる） */
+  .att-d.on { background:var(--att-bg,#fff0b3); border-color:var(--att-bd,#f0cf4f); color:var(--att-fg,#7a5a00); font-weight:700; }
   .att-hint { font-size:11.5px; color:var(--muted); margin-top:8px; line-height:1.6; }
   /* さかのぼり入力・続きの確認パネル */
   .askbox { margin-top:12px; padding:13px; border-radius:10px; background:#f5f8ff; border:1px solid #c5d7ff; }
@@ -762,7 +763,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.18-2</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.18-3</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -2094,7 +2095,7 @@ function closeAttend(){ document.getElementById("attOverlay").classList.remove("
 function drawAttend(){
   const y=attMonth.getFullYear(), m=attMonth.getMonth();
   const first=new Date(y,m,1);
-  const start=new Date(y,m,1-((first.getDay()+6)%7));   // 月曜はじまり
+  const start=new Date(y,m,1-first.getDay());            // 日曜はじまり
   const tStr=todayStr();
   let rows="";
   for(let w=0; w<6; w++){
@@ -2116,7 +2117,7 @@ function drawAttend(){
       <button class="m-close" data-attx="1">✕</button>
     </div>
     <div class="att-sub"><span class="av av-sm av-F">F</span>F出勤カレンダー</div>
-    <div class="att-row att-dows">${["月","火","水","木","金","土","日"].map((d,i)=>`<span class="${i===5?"sat":i===6?"sun":""}">${d}</span>`).join("")}</div>
+    <div class="att-row att-dows">${["日","月","火","水","木","金","土"].map((d,i)=>`<span class="${i===0?"sun":i===6?"sat":""}">${d}</span>`).join("")}</div>
     ${rows}
     <div class="att-hint">出勤日をタップすると色が付きます。もう一度タップで外れます。</div>
     <button class="popact" data-attx="1">閉じる</button>`;
