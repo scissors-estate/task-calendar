@@ -763,7 +763,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.18-3</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.18-4</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -2038,9 +2038,9 @@ document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&popId) closeTaskPo
 
 /* ===== 日付をまたいだ時計の自動中断（2026-09-18 追加） =====
    終える操作を忘れて帰ると、時計が翌日まで動き続けてしまう。
-   前の日以前に「作業中」のまま残っている人は、その日の業務終了時刻で止める。
-   （業務終了より後に始めていた場合は、始めた時刻で止める＝時間を足さない） */
-const WORK_END_HOUR=19;
+   前の日以前に「作業中」のまま残っている人は、その日の24時（翌0:00）で止める。
+   19時以降に作業することもあるため、日付が変わる瞬間を区切りにしている。 */
+const WORK_END_HOUR=24;
 function autoPauseStale(){
   const today=todayStr(); let changed=false;
   tasks.forEach(t=>{
