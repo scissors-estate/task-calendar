@@ -773,7 +773,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.09.28</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.10.09</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -801,7 +801,6 @@
       <span class="chip" data-f="todo">未着手</span>
       <span class="chip" data-f="doing">進行中</span>
       <span class="chip" data-f="done">完了</span>
-      <span class="chip" data-f="overdue">要対応</span>
       <span class="chip" data-f="recur">🔁 繰り返し</span>
     </div>
     <div class="filters owners" id="ownerFilters">
@@ -1165,10 +1164,8 @@ function pillCls(t, dateStr){
   if(s==="done")   return "done";
   if(s==="doing")  return "doing";    // 対応中は期限の色より優先（埋もれないように）
   if(s==="paused") return "paused";
-  const u=urgency(t);
-  if(u==="overdue") return "overdue";                       // 期限切れの赤だけは共通でも出す
-  if(s==="todo" && !ownerOf(t)) return "plain";             // 共通の未着手は色なし
-  if(u==="soon")    return "soon";
+  /* 期限切れ・まもなくの色分けは廃止（2026-10-09）。未着手は共通なら白、担当者付きはグレー */
+  if(s==="todo" && !ownerOf(t)) return "plain";
   return s;
 }
 function isRecur(t){ return t.daysOfWeek&&t.daysOfWeek.length>0; }
@@ -1498,15 +1495,11 @@ function buildDateMap(calStart){
 
 /* ===== SUMMARY ===== */
 function renderSummary(){
-  const over =tasks.filter(t=>urgency(t)==="overdue").length;
-  const soon =tasks.filter(t=>urgency(t)==="soon").length;
   const doing=tasks.filter(t=>t.status==="doing").length;
   const todo =tasks.filter(t=>t.status==="todo").length;
   const done =tasks.filter(t=>t.status==="done").length;
   const recur=tasks.filter(isRecur).length;
   document.getElementById("summaryBar").innerHTML=`
-    ${over ?`<div class="stat over" ><span class="num">${over}</span> ⚠ 期限切れ</div>`:""}
-    ${soon ?`<div class="stat soon2"><span class="num">${soon}</span> 🔥 まもなく</div>`:""}
     <div class="stat doing2"><span class="num">${doing}</span> 進行中</div>
     <div class="stat"       ><span class="num">${todo}</span> 未着手</div>
     <div class="stat done2" ><span class="num">${done}</span> 完了</div>
@@ -1769,11 +1762,7 @@ function renderDayBody(){
       /* 2人以上が関わっている日は、人ごとの内訳を1行で見せる */
       const bdLine = bd.length>1
         ? `<div class="d2sub">${bd.map(x=>`${x.name} ${fmtElapsedShort(x.ms)}（${pLabel(x)}）`).join("　／　")}</div>` : "";
-      let warn="";
-      if(st.s!=="done"){
-        const u=urgency(t);
-        if(u==="overdue") warn=`<span class="badge overdue">期限切れ</span>`;
-      }
+      const warn="";   // 期限切れの表示は廃止（2026-10-09）
       const rc=isRecur(t)?`<div class="d2sub">🔁 ${fmtDows(t.daysOfWeek)}</div>`
               :(isCarried(t)?`<div class="d2sub">📅 前の日からの続き　通算 ${fmtElapsedShort(totalMs(t))}</div>`:"");
       return `<div class="d2row" data-rid="${t.id}">
@@ -2375,8 +2364,24 @@ document.getElementById("saveBtn").addEventListener("click",()=>{
   updateSelHint();
 });
 document.getElementById("deleteBtn").addEventListener("click",()=>{
-  const t=tasks.find(x=>x.id===editingId);
-  if(t&&confirm(`「${t.name}」を削除しますか？`)){ tasks=tasks.filter(x=>x.id!==editingId); save(); closeTaskModal(); renderAll(); }
+  const t=tasks.find(x=>x.id===editingId); if(!t) return;
+  /* 1件だけ消すつもりで、この先の予定まで消してしまう事故を防ぐ（2026-10-09 追加） */
+  const rec=isRecur(t);
+  const future=(t.dates||[]).filter(d=>d>=todayStr()).length;
+  const logged=Object.keys(t.dayLog||{}).length;
+  let msg=`「${t.name}」をタスクごと削除します。\n\n`;
+  if(rec){
+    msg+=`⚠ これは ${fmtDows(t.daysOfWeek)} の繰り返しタスクです。\n`
+       + `　 今日以降の予定もすべて消えます。\n`;
+  } else if(future){
+    msg+=`⚠ 今日以降の予定が ${future}件 あります。これも消えます。\n`;
+  }
+  if(logged) msg+=`⚠ 記録した作業時間（${logged}日ぶん）も消えます。\n`;
+  msg+=`\nこの操作は元に戻せません。`;
+  msg+=`\n\n※ その日だけ消したいときは「キャンセル」→ 日付をクリック → 「この日の全タスクを削除」`;
+  if(!confirm(msg)) return;
+  if((rec||future>0) && !confirm(`もう一度確認します。\n\n「${t.name}」の今日以降の予定もすべて消えますが、本当に削除しますか？`)) return;
+  tasks=tasks.filter(x=>x.id!==editingId); save(); closeTaskModal(); renderAll();
 });
 
 /* ===== ルーチン一括モーダル ===== */
@@ -2458,8 +2463,7 @@ document.getElementById("routineSave").addEventListener("click",()=>{
 /* ===== SIDEBAR ===== */
 function renderSide(){
   let arr=tasks.slice();
-  if(sideFilter==="overdue") arr=arr.filter(t=>urgency(t)==="overdue"||urgency(t)==="soon");
-  else if(sideFilter==="recur") arr=arr.filter(isRecur);
+  if(sideFilter==="recur") arr=arr.filter(isRecur);
   else if(sideFilter!=="all") arr=arr.filter(t=>t.status===sideFilter);
   if(sideOwner!=="any") arr=arr.filter(t=>ownerOf(t)===sideOwner);
   const isManual = sideSort==="manual";
@@ -2481,10 +2485,8 @@ function renderSide(){
   const el=document.getElementById("taskScroll");
   if(!arr.length){ el.innerHTML=`<div class="empty-msg">タスクがありません。</div>`; return; }
   el.innerHTML=arr.map(t=>{
-    const u=urgency(t); const rc=isRecur(t);
-    let warn="";
-    if(u==="overdue") warn=`<span class="badge overdue">期限切れ</span>`;
-    else if(u==="soon"){ const n=t.dates.map(daysUntil).filter(d=>d>=0).sort((a,b)=>a-b)[0]; warn=`<span class="badge soon">${n===0?"本日":"あと"+n+"日"}</span>`; }
+    const rc=isRecur(t);
+    const warn="";   // 期限切れ・あと◯日の表示は廃止（2026-10-09）
     const dateStr=t.dates.length?t.dates.map(fmtDate).join(" / "):"";
     const dowStr=rc?fmtDows(t.daysOfWeek):"";
     let recurProgress="";
@@ -2502,7 +2504,7 @@ function renderSide(){
       recurProgress=`<span style="font-size:11px;background:${done===total&&total>0?"#e6f7ef":"#f0f3f8"};color:${done===total&&total>0?"#1a7a45":"var(--muted)"};border-radius:10px;padding:1px 7px;font-weight:600;">${done}/${total}日完了</span>`;
     }
     const cardStyle=t.color?` style="border-left-color:${t.color}"`:"";
-    return `<div class="task-card ${u||t.status} ${rc?"recur":""} ${isManual?"sortable":""}" data-id="${t.id}"${cardStyle}>
+    return `<div class="task-card ${t.status} ${rc?"recur":""} ${isManual?"sortable":""}" data-id="${t.id}"${cardStyle}>
       <span class="drag-handle" title="ドラッグして並び替え">⠿</span>
       <div class="task-card-body">
         <div class="tname" style="display:flex;align-items:center;gap:7px">${avHtml(t,true)}<span>${esc(t.name)}</span>${isCarried(t)?`<span class="carry-badge">続き</span>`:""}</div>
@@ -2708,6 +2710,10 @@ document.getElementById("importFile").addEventListener("change",e=>{
       if(!tasksRef){ alert("ログインしてから実行してください。"); return; }
       const map={};
       data.forEach(t=>{ const x=normalizeTask(Object.assign({},t)); if(!x.id) x.id=uid(); map[x.id]=x; });
+      /* F出勤カレンダーは tasks の中に置いているので、インポートで消えないよう入れ直す */
+      if(Object.keys(attend).length || Object.keys(holiday).length){
+        map[ATT_ID]={ name:ATT_NAME, kind:"attendance", days:attend, holidays:holiday };
+      }
       tasksRef.set(map)
         .then(()=>alert(`インポートが完了しました（${data.length}件）。`))
         .catch(err=>{ console.error(err); alert("インポートに失敗しました。権限と通信状態を確認してください。"); });
