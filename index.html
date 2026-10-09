@@ -157,6 +157,43 @@
     display:flex; flex-direction:column; gap:3px; min-height:52px; min-width:0;
   }
   .ocell:last-child { border-right:0; }
+  /* 祝日の行 */
+  .ohol {
+    grid-column:span 4; align-items:center; justify-content:center;
+    color:#c83030; font-weight:700; font-size:13px; letter-spacing:.08em;
+    background:#fff6f6; cursor:pointer;
+  }
+  .orow.hol .odate { background:#fdeeee; }
+  .mday.hol .mhead { background:#fdeeee; }
+  /* ゴミ箱 */
+  .tr-row { display:flex; align-items:center; gap:10px; padding:9px 2px; border-bottom:1px solid var(--border); }
+  .tr-row:last-of-type { border-bottom:0; }
+  .tr-main { flex:1; min-width:0; }
+  .tr-n { font-size:13.5px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tr-m { font-size:11px; color:var(--muted); }
+  .tr-b {
+    font:inherit; font-size:12px; padding:6px 13px; border-radius:8px; flex:none;
+    border:1px solid var(--accent); background:var(--accent-soft); color:var(--accent); font-weight:700; cursor:pointer;
+  }
+  .tr-b:hover { background:var(--accent); color:#fff; }
+  .tr-empty { font-size:13px; color:var(--muted); text-align:center; padding:18px 0; }
+  .tr-hint { font-size:11.5px; color:var(--muted); line-height:1.6; margin:8px 0 10px; padding-bottom:9px; border-bottom:1px solid var(--border); }
+  /* 削除直後の「元に戻す」 */
+  .undo-bar {
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:300;
+    display:flex; align-items:center; gap:12px; background:#2c3440; color:#fff;
+    padding:10px 14px; border-radius:10px; font-size:13px; box-shadow:0 6px 24px rgba(10,20,60,.28);
+  }
+  .undo-bar button {
+    font:inherit; font-size:12.5px; font-weight:700; padding:6px 12px; border-radius:7px;
+    border:1px solid rgba(255,255,255,.5); background:transparent; color:#fff; cursor:pointer;
+  }
+  .undo-bar button:hover { background:rgba(255,255,255,.16); }
+  .dayhol {
+    background:#fdeeee; color:#c83030; font-size:12px; font-weight:700;
+    border-radius:8px; padding:7px 10px; margin:0 4px 8px; text-align:center;
+  }
+  .mhol { padding:12px; text-align:center; color:#c83030; font-weight:700; font-size:13px; letter-spacing:.08em; background:#fff6f6; }
   .ocol { cursor:pointer; }
   .ocol:hover { background:rgba(59,111,214,.05); }
   .odate {
@@ -773,7 +810,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.10.09</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.10.09-3</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -830,6 +867,7 @@
       <span class="nav-spacer"></span>
       <span class="sel-hint" id="selHint"></span>
       <button class="nav-btn routine" id="routineBtn" title="ルーチン業務を一括登録">📋 ルーチン</button>
+      <button class="nav-btn" id="trashBtn" title="削除したタスクを戻す">🗑 ゴミ箱</button>
       <button class="nav-btn primary" id="quickAddBtn">＋ タスクを追加</button>
     </div>
     <div class="ogrid-wrap" id="ogridWrap">
@@ -986,6 +1024,9 @@
 <!-- F出勤カレンダー -->
 <div class="pop-ov" id="attOverlay"><div class="pop att-pop" id="attBox"></div></div>
 
+<!-- ゴミ箱 -->
+<div class="pop-ov" id="trashOverlay"><div class="pop" id="trashBox"></div></div>
+
 <!-- 日付へ移動：1か月のカレンダー -->
 <div class="mp-ov" id="mpOverlay"><div class="mp" id="mp"></div></div>
 
@@ -1052,6 +1093,10 @@ let _lastSaved = {};             // id -> JSON文字列（差分の判定用）
 let _applyingRemote = false;     // 受信を反映している最中は保存しない
 const ATT_ID   = "__attendance_F";                          // 出勤カレンダー用の特別な1件
 const ATT_NAME = "F出勤カレンダーのデータ（消さないでください）";
+const TRASH_ID   = "__trash";                               // 削除したタスクの置き場
+const TRASH_NAME = "ゴミ箱（消さないでください）";
+const TRASH_DAYS = 30;                                      // 何日ためておくか
+let trashItems = {};
 
 /* Firebaseは空配列を保存できず消えるので、読み出し時に必ず配列へ戻す */
 function toArr(v){
@@ -1583,7 +1628,7 @@ function bindGrid(grid){
   grid.addEventListener("click",e=>{
     const pill=e.target.closest(".cal-pill");
     if(pill){ openTaskPop(pill.dataset.pill, pill.dataset.pdate); return; }
-    const dc=e.target.closest(".odate,.mhead");
+    const dc=e.target.closest(".odate,.mhead,.ohol,.mhol");
     if(dc&&dc.dataset.date){
       if(e.shiftKey){ toggleSel(dc.dataset.date,true); return; }
       openDayModal(dc.dataset.date); return;
@@ -1607,15 +1652,17 @@ function renderCalendar(){
       const ds=ymd(cur), dow=cur.getDay();
       const list=(dm[ds]||[]).slice().sort(byOrder);
       const doneN=list.filter(t=>dayState(t,ds).s==="done").length;
-      const cls=[ ds===tStr?"today":"", (dow===0||dow===6)?"wknd":"" ].join(" ");
+      const hol=!!holiday[ds];
+      const cls=[ ds===tStr?"today":"", (dow===0||dow===6)?"wknd":"", hol?"hol":"" ].join(" ");
       html+=`<div class="mday ${cls}">`
         + `<div class="mhead" data-date="${ds}" title="タップでこの日の詳細">`
-        +   `<span class="mdate ${dow===0?"sun":dow===6?"sat":""}">${cur.getMonth()+1}/${cur.getDate()}</span>`
+        +   `<span class="mdate ${hol?"sun":dow===0?"sun":dow===6?"sat":""}">${cur.getMonth()+1}/${cur.getDate()}</span>`
         +   `<span class="mdow">${DOWS[dow]}</span>`
         +   (ds===tStr?`<span class="tdy">今日</span>`:"")
-        +   `<span class="mcnt">${list.length?`${doneN} / ${list.length} 完了`:"予定なし"}</span>`
+        +   `<span class="mcnt">${hol?"":(list.length?`${doneN} / ${list.length} 完了`:"予定なし")}</span>`
         + `</div>`
-        + (list.length?`<div class="mbody">${list.map(t=>pillHtml(t,ds)).join("")}</div>`:"")
+        + (hol ? `<div class="mhol">祝日</div>`
+               : (list.length?`<div class="mbody">${list.map(t=>pillHtml(t,ds)).join("")}</div>`:""))
         + `</div>`;
     });
     const g=document.getElementById("ogrid");
@@ -1643,19 +1690,25 @@ function renderCalendar(){
   dates.forEach(cur=>{
     const ds=ymd(cur), dow=cur.getDay();
     const list=(dm[ds]||[]).slice().sort(byOrder);
-    const cls=[ ds===tStr?"today":"", (dow===0||dow===6)?"wknd":"", selected.has(ds)?"sel":"" ].join(" ");
+    const hol=!!holiday[ds];
+    const cls=[ ds===tStr?"today":"", (dow===0||dow===6)?"wknd":"", selected.has(ds)?"sel":"", hol?"hol":"" ].join(" ");
     html+=`<div class="orow ${cls}">`
       + `<div class="ocell odate" data-date="${ds}" title="クリックでこの日の詳細／Shift+クリックで選択">`
-      +   `<span class="dn ${dow===0?"sun":dow===6?"sat":""}">${cur.getDate()}</span>`
+      +   `<span class="dn ${hol?"sun":dow===0?"sun":dow===6?"sat":""}">${cur.getDate()}</span>`
       +   `<span class="dw">${DOWS[dow]}</span>`
       +   (ds===tStr?`<span class="tdy">今日</span>`:"")
       + `</div>`;
-    OWNER_COLS.forEach(c=>{
-      const items=list.filter(t=>ownerOf(t)===c.key);
-      html+=`<div class="ocell ocol" data-date="${ds}" data-own="${c.key}" title="クリックでここにタスクを追加">`
-        + (items.length ? items.map(t=>pillHtml(t,ds)).join("") : `<span class="empty-hint">＋</span>`)
-        + `</div>`;
-    });
+    if(hol){
+      /* 祝日はタスクを並べず「祝日」とだけ出す（タスク自体は日付をクリックすれば見られる） */
+      html+=`<div class="ocell ohol" data-date="${ds}" title="クリックでこの日の詳細">祝日</div>`;
+    } else {
+      OWNER_COLS.forEach(c=>{
+        const items=list.filter(t=>ownerOf(t)===c.key);
+        html+=`<div class="ocell ocol" data-date="${ds}" data-own="${c.key}" title="クリックでここにタスクを追加">`
+          + (items.length ? items.map(t=>pillHtml(t,ds)).join("") : `<span class="empty-hint">＋</span>`)
+          + `</div>`;
+      });
+    }
     html+=`</div>`;
   });
 
@@ -1726,7 +1779,8 @@ function renderDayBody(){
   const doneN =list.filter(t=>dayState(t,s).s==="done").length;
   const doingN=list.filter(t=>dayState(t,s).s==="doing").length;
   body.innerHTML=
-    `<div class="dayhead2">
+    (holiday[s]?`<div class="dayhol">この日は祝日に設定されています</div>`:"")
+  + `<div class="dayhead2">
        <span class="lbl"><span class="num">${list.length}</span>件のタスク</span>
        <span class="lbl">完了 <span class="num">${doneN}</span>　対応中 <span class="num">${doingN}</span></span>
      </div>`
@@ -2088,10 +2142,98 @@ function splitRemote(v){
   const raw=v[ATT_ID];
   attend=(raw&&raw.days&&typeof raw.days==="object")?Object.assign({},raw.days):{};
   holiday=(raw&&raw.holidays&&typeof raw.holidays==="object")?Object.assign({},raw.holidays):{};
+  const tr=v[TRASH_ID];
+  trashItems=(tr&&tr.items&&typeof tr.items==="object")?Object.assign({},tr.items):{};
+  purgeTrash();
   if(document.getElementById("attOverlay").classList.contains("open")) drawAttend();
-  return Object.keys(v).filter(id=>id!==ATT_ID)
+  if(document.getElementById("trashOverlay").classList.contains("open")) drawTrash();
+  return Object.keys(v).filter(id=>id!==ATT_ID && id!==TRASH_ID)
     .map(id=>normalizeTask(Object.assign({}, v[id], { id:id })));
 }
+/* ===== ゴミ箱（2026-10-09 追加） =====
+   削除したタスクは消さずに tasks/__trash へ退避し、30日たったら自動で消える。
+   タスクは文字列にして保存するので、日付や作業記録もそのまま戻せる。 */
+function trashWrite(id,val){
+  if(!tasksRef) return;
+  const up={ name:TRASH_NAME, kind:"trash" };
+  up["items/"+id]=val;                        // null を送るとその1件だけ消える
+  tasksRef.child(TRASH_ID).update(up).catch(e=>console.error(e));
+}
+function moveToTrash(t){
+  if(!t) return;
+  const item={ t:JSON.stringify(t), name:t.name||"", at:Date.now(), by:myName||"" };
+  trashItems[t.id]=item;
+  trashWrite(t.id,item);
+}
+function purgeTrash(){
+  const limit=Date.now()-TRASH_DAYS*86400000;
+  Object.keys(trashItems).forEach(id=>{
+    if((Number(trashItems[id].at)||0)<limit){ delete trashItems[id]; trashWrite(id,null); }
+  });
+}
+function restoreFromTrash(id){
+  const it=trashItems[id]; if(!it) return;
+  let t=null;
+  try{ t=normalizeTask(JSON.parse(it.t)); }catch(e){ console.error(e); alert("復元できませんでした。"); return; }
+  if(tasks.some(x=>x.id===t.id)) t.id=uid();          // 同じidが残っていたら新しいidで戻す
+  t.order=tasks.reduce((m,x)=>Math.max(m,x.order||0),0)+1;
+  tasks.push(t);
+  delete trashItems[id]; trashWrite(id,null);
+  try{save();}catch(e){console.error(e);}
+  renderAll();
+  if(document.getElementById("trashOverlay").classList.contains("open")) drawTrash();
+  showToast(`「${t.name}」を復元しました`);
+}
+function showToast(msg){
+  const el=document.createElement("div");
+  el.style.cssText="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#2a9f63;color:#fff;padding:10px 20px;border-radius:10px;font-size:14px;font-weight:600;z-index:300;box-shadow:0 4px 20px rgba(0,0,0,.15);";
+  el.textContent=msg; document.body.appendChild(el);
+  setTimeout(()=>el.remove(),2800);
+}
+/* 削除した直後だけ出る「元に戻す」 */
+function showUndo(msg,onUndo){
+  const old=document.getElementById("undoBar"); if(old) old.remove();
+  const bar=document.createElement("div");
+  bar.id="undoBar"; bar.className="undo-bar";
+  bar.innerHTML=`<span>${esc(msg)}</span>`;
+  const b=document.createElement("button");
+  b.textContent="元に戻す";
+  b.addEventListener("click",()=>{ bar.remove(); onUndo(); });
+  bar.appendChild(b);
+  document.body.appendChild(bar);
+  setTimeout(()=>{ if(bar.parentNode) bar.remove(); },10000);
+}
+function openTrash(){ drawTrash(); document.getElementById("trashOverlay").classList.add("open"); }
+function closeTrash(){ document.getElementById("trashOverlay").classList.remove("open"); }
+function drawTrash(){
+  const ids=Object.keys(trashItems).sort((a,b)=>(Number(trashItems[b].at)||0)-(Number(trashItems[a].at)||0));
+  const rows=ids.length ? ids.map(id=>{
+    const it=trashItems[id];
+    const left=Math.max(0,TRASH_DAYS-Math.floor((Date.now()-(Number(it.at)||0))/86400000));
+    return `<div class="tr-row">
+        <div class="tr-main">
+          <div class="tr-n">${esc(it.name||"（名前なし）")}</div>
+          <div class="tr-m">${hhmm(Number(it.at)||0)}　${it.by?esc(it.by)+" が削除":"削除"}　／　あと${left}日で自動削除</div>
+        </div>
+        <button class="tr-b" data-restore="${id}">復元</button>
+      </div>`;
+  }).join("") : `<div class="tr-empty">削除したタスクはありません。</div>`;
+  document.getElementById("trashBox").innerHTML=
+   `<div class="pophead"><h4>🗑 ゴミ箱</h4><button class="m-close" data-trx="1">✕</button></div>
+    <div class="tr-hint">削除したタスクは${TRASH_DAYS}日間ここに残ります。「復元」を押すと、日付や作業時間の記録もそのまま戻ります。</div>
+    ${rows}
+    <button class="popact" data-trx="1">閉じる</button>`;
+}
+document.getElementById("trashBtn").addEventListener("click",openTrash);
+document.getElementById("trashOverlay").addEventListener("click",e=>{
+  if(e.target===e.currentTarget||e.target.closest("[data-trx]")){ closeTrash(); return; }
+  const r=e.target.closest("[data-restore]");
+  if(r) restoreFromTrash(r.dataset.restore);
+});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&document.getElementById("trashOverlay").classList.contains("open")) closeTrash();
+});
+
 function openAttend(){ attMonth=new Date(); drawAttend(); document.getElementById("attOverlay").classList.add("open"); }
 function closeAttend(){ document.getElementById("attOverlay").classList.remove("open"); }
 function drawAttend(){
@@ -2236,7 +2378,8 @@ document.getElementById("dayBulkDel").addEventListener("click",()=>{
   const list=getDayAllTasks(currentDay);
   if(!list.length){ alert("この日に削除できるタスクがありません。"); return; }
   if(!confirm(`${fmtDateLong(currentDay)} の全タスク（${list.length}件）をこの日のみ削除しますか？\n※繰り返しタスクはこの日だけ非表示になります。`)) return;
-  const toDelete=[];
+  const toDelete=[], snap={};
+  list.forEach(t=>{ snap[t.id]=JSON.parse(JSON.stringify(t)); });   // 消す前の姿を控えておく
   list.forEach(t=>{
     if(isRecur(t)){
       if(!t.skipDates) t.skipDates=[];
@@ -2246,9 +2389,13 @@ document.getElementById("dayBulkDel").addEventListener("click",()=>{
       if(idx!==-1){ t.dates.splice(idx,1); if(!t.dates.length) toDelete.push(t.id); }
     }
   });
-  if(toDelete.length) tasks=tasks.filter(x=>!toDelete.includes(x.id));
+  if(toDelete.length){
+    toDelete.forEach(id=>moveToTrash(snap[id]));                    // ゴミ箱へ退避
+    tasks=tasks.filter(x=>!toDelete.includes(x.id));
+  }
   try{save();}catch(ex){console.error(ex);}
   closeDayModal(); renderAll();
+  if(toDelete.length) showUndo(`${toDelete.length}件のタスクを削除しました`,()=>toDelete.forEach(restoreFromTrash));
 });
 
 /* ===== モーダル日付チップ ===== */
@@ -2381,7 +2528,10 @@ document.getElementById("deleteBtn").addEventListener("click",()=>{
   msg+=`\n\n※ その日だけ消したいときは「キャンセル」→ 日付をクリック → 「この日の全タスクを削除」`;
   if(!confirm(msg)) return;
   if((rec||future>0) && !confirm(`もう一度確認します。\n\n「${t.name}」の今日以降の予定もすべて消えますが、本当に削除しますか？`)) return;
+  const copy=JSON.parse(JSON.stringify(t));
+  moveToTrash(copy);                       // ゴミ箱へ退避（30日間は戻せる）
   tasks=tasks.filter(x=>x.id!==editingId); save(); closeTaskModal(); renderAll();
+  showUndo(`「${copy.name}」を削除しました`,()=>restoreFromTrash(copy.id));
 });
 
 /* ===== ルーチン一括モーダル ===== */
@@ -2654,6 +2804,8 @@ function applySide(){
   if(qa) qa.textContent = narrow ? "＋ 追加" : "＋ タスクを追加";
   const ab=document.getElementById("attendBtn");
   if(ab) ab.textContent = narrow ? "🗓F" : "🗓 F出勤カレンダー";
+  const tb=document.getElementById("trashBtn");
+  if(tb) tb.textContent = narrow ? "🗑" : "🗑 ゴミ箱";
 }
 window.addEventListener("resize",()=>{ applySide(); });
 document.getElementById("mobileToggle").addEventListener("click",()=>{
