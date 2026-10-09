@@ -810,7 +810,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.10.09-3</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.10.09-4</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -1097,6 +1097,8 @@ const TRASH_ID   = "__trash";                               // 削除したタ�
 const TRASH_NAME = "ゴミ箱（消さないでください）";
 const TRASH_DAYS = 30;                                      // 何日ためておくか
 let trashItems = {};
+let pendingTrash = {};   // まだDBに反映されていないぶん（受信で消えないよう手元に残す）
+let trashWarned = false;
 
 /* Firebaseは空配列を保存できず消えるので、読み出し時に必ず配列へ戻す */
 function toArr(v){
@@ -2143,7 +2145,9 @@ function splitRemote(v){
   attend=(raw&&raw.days&&typeof raw.days==="object")?Object.assign({},raw.days):{};
   holiday=(raw&&raw.holidays&&typeof raw.holidays==="object")?Object.assign({},raw.holidays):{};
   const tr=v[TRASH_ID];
-  trashItems=(tr&&tr.items&&typeof tr.items==="object")?Object.assign({},tr.items):{};
+  const fromDb=(tr&&tr.items&&typeof tr.items==="object")?tr.items:{};
+  Object.keys(fromDb).forEach(id=>{ delete pendingTrash[id]; });   // DBに入ったものは手元の控えを外す
+  trashItems=Object.assign({}, pendingTrash, fromDb);              // 受信で手元のぶんが消えないようにする
   purgeTrash();
   if(document.getElementById("attOverlay").classList.contains("open")) drawAttend();
   if(document.getElementById("trashOverlay").classList.contains("open")) drawTrash();
@@ -2157,12 +2161,21 @@ function trashWrite(id,val){
   if(!tasksRef) return;
   const up={ name:TRASH_NAME, kind:"trash" };
   up["items/"+id]=val;                        // null を送るとその1件だけ消える
-  tasksRef.child(TRASH_ID).update(up).catch(e=>console.error(e));
+  tasksRef.child(TRASH_ID).update(up)
+    .then(()=>{ if(val) delete pendingTrash[id]; })
+    .catch(e=>{
+      console.error(e);
+      if(!trashWarned){
+        trashWarned=true;
+        alert("ゴミ箱への保存に失敗しました。\nこの画面を開いている間は「元に戻す」で戻せますが、閉じると戻せません。\n（データベースの権限設定を確認してください）");
+      }
+    });
 }
 function moveToTrash(t){
   if(!t) return;
   const item={ t:JSON.stringify(t), name:t.name||"", at:Date.now(), by:myName||"" };
   trashItems[t.id]=item;
+  pendingTrash[t.id]=item;                    // DBに入るまでは手元でも持っておく
   trashWrite(t.id,item);
 }
 function purgeTrash(){
@@ -2171,18 +2184,34 @@ function purgeTrash(){
     if((Number(trashItems[id].at)||0)<limit){ delete trashItems[id]; trashWrite(id,null); }
   });
 }
+/* タスクそのものを書き戻す。save() の差分計算に頼らず、その場でDBへ書く */
+function restoreTask(obj){
+  let t=null;
+  try{ t=normalizeTask(JSON.parse(JSON.stringify(obj))); }
+  catch(e){ console.error(e); alert("復元できませんでした。"); return null; }
+  if(!t.id || tasks.some(x=>x.id===t.id)) t.id=uid();   // 同じidが残っていたら新しいidで戻す
+  t.order=tasks.reduce((m,x)=>Math.max(m,x.order||0),0)+1;
+  tasks.push(t); tasks.sort(byOrder);
+  _lastSaved[t.id]=JSON.stringify(t);                   // 直後の受信で消えないようにする
+  if(tasksRef){
+    tasksRef.child(t.id).set(t).catch(e=>{
+      console.error(e); alert("復元を保存できませんでした。通信状態を確認してください。");
+    });
+  }
+  renderAll();
+  showToast(`「${t.name}」を復元しました`);
+  return t;
+}
+function dropTrash(id){
+  delete trashItems[id]; delete pendingTrash[id];
+  trashWrite(id,null);
+  if(document.getElementById("trashOverlay").classList.contains("open")) drawTrash();
+}
 function restoreFromTrash(id){
   const it=trashItems[id]; if(!it) return;
-  let t=null;
-  try{ t=normalizeTask(JSON.parse(it.t)); }catch(e){ console.error(e); alert("復元できませんでした。"); return; }
-  if(tasks.some(x=>x.id===t.id)) t.id=uid();          // 同じidが残っていたら新しいidで戻す
-  t.order=tasks.reduce((m,x)=>Math.max(m,x.order||0),0)+1;
-  tasks.push(t);
-  delete trashItems[id]; trashWrite(id,null);
-  try{save();}catch(e){console.error(e);}
-  renderAll();
-  if(document.getElementById("trashOverlay").classList.contains("open")) drawTrash();
-  showToast(`「${t.name}」を復元しました`);
+  let obj=null;
+  try{ obj=JSON.parse(it.t); }catch(e){ console.error(e); alert("復元できませんでした。"); return; }
+  if(restoreTask(obj)) dropTrash(id);
 }
 function showToast(msg){
   const el=document.createElement("div");
@@ -2395,7 +2424,8 @@ document.getElementById("dayBulkDel").addEventListener("click",()=>{
   }
   try{save();}catch(ex){console.error(ex);}
   closeDayModal(); renderAll();
-  if(toDelete.length) showUndo(`${toDelete.length}件のタスクを削除しました`,()=>toDelete.forEach(restoreFromTrash));
+  if(toDelete.length) showUndo(`${toDelete.length}件のタスクを削除しました`,
+    ()=>toDelete.forEach(id=>{ if(restoreTask(snap[id])) dropTrash(id); }));
 });
 
 /* ===== モーダル日付チップ ===== */
@@ -2531,7 +2561,8 @@ document.getElementById("deleteBtn").addEventListener("click",()=>{
   const copy=JSON.parse(JSON.stringify(t));
   moveToTrash(copy);                       // ゴミ箱へ退避（30日間は戻せる）
   tasks=tasks.filter(x=>x.id!==editingId); save(); closeTaskModal(); renderAll();
-  showUndo(`「${copy.name}」を削除しました`,()=>restoreFromTrash(copy.id));
+  /* 手元の控えから戻すので、ゴミ箱の保存が失敗していても元に戻せる */
+  showUndo(`「${copy.name}」を削除しました`,()=>{ if(restoreTask(copy)) dropTrash(copy.id); });
 });
 
 /* ===== ルーチン一括モーダル ===== */
