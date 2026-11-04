@@ -178,6 +178,17 @@
   .tr-b:hover { background:var(--accent); color:#fff; }
   .tr-empty { font-size:13px; color:var(--muted); text-align:center; padding:18px 0; }
   .tr-hint { font-size:11.5px; color:var(--muted); line-height:1.6; margin:8px 0 10px; padding-bottom:9px; border-bottom:1px solid var(--border); }
+  /* メンバー追加 */
+  .mem-add { margin-top:12px; padding:12px; border-radius:10px; background:#f5f8ff; border:1px solid #c5d7ff; }
+  .mem-add input {
+    width:100%; border:1px solid var(--border); border-radius:8px; padding:8px 10px;
+    font-family:inherit; font-size:13px; color:var(--text);
+  }
+  .mem-del {
+    font:inherit; font-size:12px; padding:6px 12px; border-radius:8px; flex:none;
+    border:1px solid #f0b4b4; background:#fff5f5; color:#b03030; cursor:pointer;
+  }
+  .mem-del:hover { background:#b03030; color:#fff; border-color:#b03030; }
   /* 削除直後の「元に戻す」 */
   .undo-bar {
     position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:300;
@@ -810,7 +821,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.10.09-4</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.11.04</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -868,6 +879,7 @@
       <span class="sel-hint" id="selHint"></span>
       <button class="nav-btn routine" id="routineBtn" title="ルーチン業務を一括登録">📋 ルーチン</button>
       <button class="nav-btn" id="trashBtn" title="削除したタスクを戻す">🗑 ゴミ箱</button>
+      <button class="nav-btn" id="memBtn" title="ログインできるアカウントを追加する">👥 メンバー</button>
       <button class="nav-btn primary" id="quickAddBtn">＋ タスクを追加</button>
     </div>
     <div class="ogrid-wrap" id="ogridWrap">
@@ -1027,6 +1039,9 @@
 <!-- ゴミ箱 -->
 <div class="pop-ov" id="trashOverlay"><div class="pop" id="trashBox"></div></div>
 
+<!-- メンバー（ログインできるアカウント） -->
+<div class="pop-ov" id="memOverlay"><div class="pop" id="memBox"></div></div>
+
 <!-- 日付へ移動：1か月のカレンダー -->
 <div class="mp-ov" id="mpOverlay"><div class="mp" id="mp"></div></div>
 
@@ -1096,6 +1111,9 @@ const ATT_NAME = "F出勤カレンダーのデータ（消さないでくださ�
 const TRASH_ID   = "__trash";                               // 削除したタスクの置き場
 const TRASH_NAME = "ゴミ箱（消さないでください）";
 const TRASH_DAYS = 30;                                      // 何日ためておくか
+const MEM_ID   = "__members";                               // アプリから追加したログイン可能なアカウント
+const MEM_NAME = "ログインできる人（消さないでください）";
+let extraMembers = {};                                      // { "a,b@gmail,com": "F" }
 let trashItems = {};
 let pendingTrash = {};   // まだDBに反映されていないぶん（受信で消えないよう手元に残す）
 let trashWarned = false;
@@ -2144,6 +2162,9 @@ function splitRemote(v){
   const raw=v[ATT_ID];
   attend=(raw&&raw.days&&typeof raw.days==="object")?Object.assign({},raw.days):{};
   holiday=(raw&&raw.holidays&&typeof raw.holidays==="object")?Object.assign({},raw.holidays):{};
+  const mb=v[MEM_ID];
+  extraMembers=(mb&&mb.items&&typeof mb.items==="object")?Object.assign({},mb.items):{};
+  if(document.getElementById("memOverlay").classList.contains("open")) drawMembers();
   const tr=v[TRASH_ID];
   const fromDb=(tr&&tr.items&&typeof tr.items==="object")?tr.items:{};
   Object.keys(fromDb).forEach(id=>{ delete pendingTrash[id]; });   // DBに入ったものは手元の控えを外す
@@ -2151,7 +2172,7 @@ function splitRemote(v){
   purgeTrash();
   if(document.getElementById("attOverlay").classList.contains("open")) drawAttend();
   if(document.getElementById("trashOverlay").classList.contains("open")) drawTrash();
-  return Object.keys(v).filter(id=>id!==ATT_ID && id!==TRASH_ID)
+  return Object.keys(v).filter(id=>id!==ATT_ID && id!==TRASH_ID && id!==MEM_ID)
     .map(id=>normalizeTask(Object.assign({}, v[id], { id:id })));
 }
 /* ===== ゴミ箱（2026-10-09 追加） =====
@@ -2232,6 +2253,73 @@ function showUndo(msg,onUndo){
   document.body.appendChild(bar);
   setTimeout(()=>{ if(bar.parentNode) bar.remove(); },10000);
 }
+/* ===== メンバー（2026-11-04 追加） =====
+   ログインできるGoogleアカウントを、アプリから足せるようにする。
+   Firebaseのキーにドットが使えないので、保存時に「.」を「,」へ置き換える。
+   置き場は tasks の中なので、データベースの権限設定を変えなくてよい。 */
+function emailKey(mail){ return String(mail||"").trim().toLowerCase().replace(/\./g,","); }
+function keyEmail(key){ return String(key||"").replace(/,/g,"."); }
+function openMembers(){ memAddName="F"; drawMembers(); document.getElementById("memOverlay").classList.add("open"); }
+function closeMembers(){ document.getElementById("memOverlay").classList.remove("open"); }
+let memAddName="F";
+function drawMembers(){
+  const ids=Object.keys(extraMembers).sort();
+  const rows=ids.length ? ids.map(k=>
+    `<div class="tr-row">
+       <div class="tr-main">
+         <div class="tr-n">${esc(keyEmail(k))}</div>
+         <div class="tr-m">表示名 ${esc(extraMembers[k])}</div>
+       </div>
+       <button class="mem-del" data-memdel="${esc(k)}">削除</button>
+     </div>`).join("") : `<div class="tr-empty">アプリから追加したアカウントはありません。</div>`;
+  document.getElementById("memBox").innerHTML=
+   `<div class="pophead"><h4>👥 ログインできる人</h4><button class="m-close" data-memx="1">✕</button></div>
+    <div class="tr-hint">ここに追加したGoogleアカウントでログインできるようになります。<br>
+      F・S・T の最初の3人はFirebase側に登録されているため、ここには出ません。</div>
+    ${rows}
+    <div class="mem-add">
+      <div class="askq">アカウントを追加</div>
+      <input type="email" id="memMail" placeholder="example@gmail.com" autocomplete="off">
+      <div class="askrow" style="margin-top:8px">
+        <span class="unit">表示名</span>
+        ${["F","S","T"].map(n=>`<button class="att-mb${memAddName===n?" on":""}" data-memname="${n}">${n}</button>`).join("")}
+      </div>
+      <button class="popact go" data-memadd="1" style="margin-top:10px">追加する</button>
+    </div>
+    <button class="popact" data-memx="1">閉じる</button>`;
+}
+function memWrite(key,val){
+  if(!tasksRef){ alert("ログインしてから実行してください。"); return; }
+  const up={ name:MEM_NAME, kind:"members" };
+  up["items/"+key]=val;
+  tasksRef.child(MEM_ID).update(up)
+    .then(()=>{ showToast(val?"追加しました":"削除しました"); })
+    .catch(e=>{ console.error(e); alert("保存できませんでした。通信状態とデータベースの権限を確認してください。"); });
+}
+document.getElementById("memBtn").addEventListener("click",openMembers);
+document.getElementById("memOverlay").addEventListener("click",e=>{
+  if(e.target===e.currentTarget||e.target.closest("[data-memx]")){ closeMembers(); return; }
+  const nm=e.target.closest("[data-memname]");
+  if(nm){ memAddName=nm.dataset.memname; drawMembers(); return; }
+  const del=e.target.closest("[data-memdel]");
+  if(del){
+    const k=del.dataset.memdel;
+    if(!confirm(`${keyEmail(k)} はログインできなくなります。よろしいですか？`)) return;
+    delete extraMembers[k]; memWrite(k,null); drawMembers(); return;
+  }
+  if(e.target.closest("[data-memadd]")){
+    const f=document.getElementById("memMail");
+    const mail=(f.value||"").trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)){ f.focus(); f.style.borderColor="var(--overdue)"; return; }
+    const k=emailKey(mail);
+    extraMembers[k]=memAddName; memWrite(k,memAddName);
+    f.value=""; drawMembers();
+  }
+});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&document.getElementById("memOverlay").classList.contains("open")) closeMembers();
+});
+
 function openTrash(){ drawTrash(); document.getElementById("trashOverlay").classList.add("open"); }
 function closeTrash(){ document.getElementById("trashOverlay").classList.remove("open"); }
 function drawTrash(){
@@ -2837,6 +2925,8 @@ function applySide(){
   if(ab) ab.textContent = narrow ? "🗓F" : "🗓 F出勤カレンダー";
   const tb=document.getElementById("trashBtn");
   if(tb) tb.textContent = narrow ? "🗑" : "🗑 ゴミ箱";
+  const mbn=document.getElementById("memBtn");
+  if(mbn) mbn.textContent = narrow ? "👥" : "👥 メンバー";
 }
 window.addEventListener("resize",()=>{ applySide(); });
 document.getElementById("mobileToggle").addEventListener("click",()=>{
@@ -2965,8 +3055,10 @@ if(String(FB_CFG.apiKey).indexOf("★")>=0){
     }
     gateBtn.hidden=true; gateBusy.hidden=false;
     const key=String(user.email||"").replace(/\./g,",");   // Firebaseのキーに . は使えない
-    fbDb.ref("members/"+key).once("value").then(snap=>{
-      const nm=snap.val();
+    /* members（コンソールで登録した人）になければ、アプリから追加した人も見る */
+    fbDb.ref("members/"+key).once("value")
+      .then(snap=>snap.val() || fbDb.ref("tasks/"+MEM_ID+"/items/"+key).once("value").then(s=>s.val()))
+      .then(nm=>{
       if(!nm){ denied(user.email); return; }
       myName=nm;
       document.getElementById("whoChip").textContent=nm+" さん";
