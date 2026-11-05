@@ -821,7 +821,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.11.04</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.11.05</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -2972,6 +2972,73 @@ document.getElementById("exportBtn").addEventListener("click",()=>{
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 document.getElementById("importBtn").addEventListener("click",()=>document.getElementById("importFile").click());
+/* ===== インポート（2026-11-05：追加モードを用意） =====
+   置き換え … これまでどおり tasks をまるごと入れ替える
+   追加     … 既存を消さずに足す。idは必ず振り直すので、同じファイルを2回読んでも既存は壊れない */
+function importAppend(data){
+  const items=[], skipped=[];
+  data.forEach(raw=>{
+    const src=Object.assign({},raw);
+    const nm=String(src.name||"").trim();
+    const hasDate=(Array.isArray(src.dates)&&src.dates.length)||(Array.isArray(src.daysOfWeek)&&src.daysOfWeek.length);
+    if(!nm||!hasDate){ skipped.push(nm||"（名前なし）"); return; }
+    src.id=uid();                                   // ファイル側のidは使わない
+    if(src.status===undefined) src.status="todo";
+    if(src.owner===undefined)  src.owner="";
+    items.push(normalizeTask(src));                 // dayLog は中身があればそのまま残る
+  });
+  if(!items.length){
+    alert(`追加できるタスクがありませんでした。\nname と日付（dates か daysOfWeek）が必要です。`
+      + (skipped.length?`\n\nスキップ：${skipped.length}件`:""));
+    return;
+  }
+  /* 同じ名前・日付・担当のタスクが既にあるか数える（止めずに知らせるだけ） */
+  const sig=t=>`${t.name}|${(t.dates||[]).join(",")}|${ownerOf(t)}`;
+  const exist={}; tasks.forEach(t=>{ exist[sig(t)]=1; });
+  const dup=items.filter(t=>exist[sig(t)]).length;
+
+  const show=items.slice(0,10).map(t=>{
+    const d=(t.dates||[]).map(fmtDate).join("・")||fmtDows(t.daysOfWeek);
+    return `・${t.name}（${d}・${ownerOf(t)||"共通"}）`;
+  }).join("\n");
+  let msg=`${items.length}件のタスクを追加します。既存のタスクは消えません。\n\n${show}`;
+  if(items.length>10) msg+=`\n…ほか${items.length-10}件`;
+  if(skipped.length)  msg+=`\n\n⚠ ${skipped.length}件はスキップします（name か日付がありません）`;
+  if(dup)             msg+=`\n⚠ ${dup}件は同じ名前・日付・担当のタスクが既にあります`;
+  msg+=`\n\nよろしいですか？`;
+  if(!confirm(msg)) return;
+
+  const map={}, ids=[];
+  let ord=tasks.reduce((m,x)=>Math.max(m,x.order||0),0);
+  items.forEach(t=>{ t.order=++ord; map[t.id]=t; ids.push(t.id); tasks.push(t); _lastSaved[t.id]=JSON.stringify(t); });
+  tasks.sort(byOrder); renderAll();
+  tasksRef.update(map)                              // set ではないので他のデータには触れない
+    .then(()=>{
+      showToast(`${ids.length}件を追加しました`);
+      showUndo(`${ids.length}件を追加しました`,()=>{
+        /* _lastSaved は消さない。残しておくと save() が「消えた分」として null を送る */
+        ids.forEach(id=>{ const t=tasks.find(x=>x.id===id); if(t) moveToTrash(t); });
+        tasks=tasks.filter(x=>!ids.includes(x.id));
+        try{save();}catch(e){console.error(e);}
+        renderAll(); showToast("取り込みを取り消しました");
+      });
+    })
+    .catch(err=>{ console.error(err); alert("追加に失敗しました。権限と通信状態を確認してください。"); });
+}
+function importReplace(data){
+  if(!confirm(`${data.length}件のタスクで置き換えます。\n⚠ 現在のタスクはすべて消えます。よろしいですか？`)) return;
+  const map={};
+  data.forEach(t=>{ const x=normalizeTask(Object.assign({},t)); if(!x.id) x.id=uid(); map[x.id]=x; });
+  /* F出勤カレンダー・ゴミ箱・メンバーは tasks の中にあるので、消えないよう入れ直す */
+  if(Object.keys(attend).length || Object.keys(holiday).length){
+    map[ATT_ID]={ name:ATT_NAME, kind:"attendance", days:attend, holidays:holiday };
+  }
+  if(Object.keys(trashItems).length) map[TRASH_ID]={ name:TRASH_NAME, kind:"trash", items:trashItems };
+  if(Object.keys(extraMembers).length) map[MEM_ID]={ name:MEM_NAME, kind:"members", items:extraMembers };
+  tasksRef.set(map)
+    .then(()=>alert(`インポートが完了しました（${data.length}件）。`))
+    .catch(err=>{ console.error(err); alert("インポートに失敗しました。権限と通信状態を確認してください。"); });
+}
 document.getElementById("importFile").addEventListener("change",e=>{
   const file=e.target.files[0]; if(!file) return;
   const reader=new FileReader();
@@ -2979,17 +3046,15 @@ document.getElementById("importFile").addEventListener("change",e=>{
     try{
       const data=JSON.parse(ev.target.result);
       if(!Array.isArray(data)) throw new Error();
-      if(!confirm(`${data.length}件のタスクをインポートします。\n現在のデータは上書きされます。よろしいですか？`)) return;
       if(!tasksRef){ alert("ログインしてから実行してください。"); return; }
-      const map={};
-      data.forEach(t=>{ const x=normalizeTask(Object.assign({},t)); if(!x.id) x.id=uid(); map[x.id]=x; });
-      /* F出勤カレンダーは tasks の中に置いているので、インポートで消えないよう入れ直す */
-      if(Object.keys(attend).length || Object.keys(holiday).length){
-        map[ATT_ID]={ name:ATT_NAME, kind:"attendance", days:attend, holidays:holiday };
+      /* OK＝追加（既存を残す） / キャンセル＝置き換えの確認へ進む */
+      if(confirm(`${data.length}件のファイルを読み込みました。\n\n`
+        + `【OK】追加する　…　既存のタスクを残したまま足します（おすすめ）\n`
+        + `【キャンセル】置き換える　…　現在のタスクをすべて入れ替えます`)){
+        importAppend(data);
+      } else {
+        importReplace(data);
       }
-      tasksRef.set(map)
-        .then(()=>alert(`インポートが完了しました（${data.length}件）。`))
-        .catch(err=>{ console.error(err); alert("インポートに失敗しました。権限と通信状態を確認してください。"); });
     }catch(ex){ alert("ファイルの読み込みに失敗しました。正しいJSONファイルを選択してください。"); }
     e.target.value="";
   };
