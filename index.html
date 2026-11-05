@@ -178,6 +178,9 @@
   .tr-b:hover { background:var(--accent); color:#fff; }
   .tr-empty { font-size:13px; color:var(--muted); text-align:center; padding:18px 0; }
   .tr-hint { font-size:11.5px; color:var(--muted); line-height:1.6; margin:8px 0 10px; padding-bottom:9px; border-bottom:1px solid var(--border); }
+  /* 取り込み前の控え */
+  .bk-sec { margin-top:14px; padding-top:10px; border-top:2px solid var(--border); }
+  .bk-h { font-size:12.5px; font-weight:700; margin-bottom:4px; }
   /* メンバー追加 */
   .mem-add { margin-top:12px; padding:12px; border-radius:10px; background:#f5f8ff; border:1px solid #c5d7ff; }
   .mem-add input {
@@ -821,7 +824,7 @@
     <p>日付を選択してタスク追加 ／ 曜日繰り返し ／ ルーチン一括登録</p>
   </div>
   <div style="display:flex;gap:6px;align-items:center;flex-shrink:0">
-    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.11.05</span>
+    <span id="verTag" title="この版が最新かどうかの目印です" style="font-size:11px;color:rgba(255,255,255,.75);white-space:nowrap">v2026.11.05-2</span>
     <button id="exportBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📤 エクスポート</button>
     <button id="importBtn" style="padding:6px 11px;border-radius:8px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.15);color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">📥 インポート</button>
     <span id="whoChip" style="padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.28);color:#fff;font-size:12px;font-weight:700;white-space:nowrap"></span>
@@ -1113,6 +1116,9 @@ const TRASH_NAME = "ゴミ箱（消さないでください）";
 const TRASH_DAYS = 30;                                      // 何日ためておくか
 const MEM_ID   = "__members";                               // アプリから追加したログイン可能なアカウント
 const MEM_NAME = "ログインできる人（消さないでください）";
+const BK_ID    = "__backup";                                // 取り込み前の自動バックアップ
+const BK_NAME  = "取り込み前の控え（消さないでください）";
+let backups = {};
 let extraMembers = {};                                      // { "a,b@gmail,com": "F" }
 let trashItems = {};
 let pendingTrash = {};   // まだDBに反映されていないぶん（受信で消えないよう手元に残す）
@@ -2165,6 +2171,8 @@ function splitRemote(v){
   const mb=v[MEM_ID];
   extraMembers=(mb&&mb.items&&typeof mb.items==="object")?Object.assign({},mb.items):{};
   if(document.getElementById("memOverlay").classList.contains("open")) drawMembers();
+  const bk=v[BK_ID];
+  backups=(bk&&bk.items&&typeof bk.items==="object")?Object.assign({},bk.items):{};
   const tr=v[TRASH_ID];
   const fromDb=(tr&&tr.items&&typeof tr.items==="object")?tr.items:{};
   Object.keys(fromDb).forEach(id=>{ delete pendingTrash[id]; });   // DBに入ったものは手元の控えを外す
@@ -2172,7 +2180,7 @@ function splitRemote(v){
   purgeTrash();
   if(document.getElementById("attOverlay").classList.contains("open")) drawAttend();
   if(document.getElementById("trashOverlay").classList.contains("open")) drawTrash();
-  return Object.keys(v).filter(id=>id!==ATT_ID && id!==TRASH_ID && id!==MEM_ID)
+  return Object.keys(v).filter(id=>id!==ATT_ID && id!==TRASH_ID && id!==MEM_ID && id!==BK_ID)
     .map(id=>normalizeTask(Object.assign({}, v[id], { id:id })));
 }
 /* ===== ゴミ箱（2026-10-09 追加） =====
@@ -2335,18 +2343,60 @@ function drawTrash(){
         <button class="tr-b" data-restore="${id}">復元</button>
       </div>`;
   }).join("") : `<div class="tr-empty">削除したタスクはありません。</div>`;
+  /* 取り込み前の控え（インポート事故のときはここから戻す） */
+  const bids=Object.keys(backups).sort((a,b)=>(Number(backups[b].at)||0)-(Number(backups[a].at)||0));
+  const bk=bids.length ? bids.map(id=>{
+    const b=backups[id];
+    return `<div class="tr-row">
+        <div class="tr-main">
+          <div class="tr-n">${hhmm(Number(b.at)||0)}　${esc(b.label||"取り込み前")}　${Number(b.count)||0}件</div>
+          <div class="tr-m">${b.by?esc(b.by)+" の操作":""}</div>
+        </div>
+        <button class="tr-b" data-bkrestore="${esc(id)}">この時点に戻す</button>
+      </div>`;
+  }).join("") : `<div class="tr-empty" style="padding:10px 0">まだありません。</div>`;
+
   document.getElementById("trashBox").innerHTML=
    `<div class="pophead"><h4>🗑 ゴミ箱</h4><button class="m-close" data-trx="1">✕</button></div>
     <div class="tr-hint">削除したタスクは${TRASH_DAYS}日間ここに残ります。「復元」を押すと、日付や作業時間の記録もそのまま戻ります。</div>
     ${rows}
+    <div class="bk-sec">
+      <div class="bk-h">🛟 取り込み前の控え（直近5回）</div>
+      <div class="tr-hint" style="border:0;margin:0 0 6px;padding:0">インポートの直前に自動で保存しています。間違えて取り込んだときは、ここから丸ごと戻せます。</div>
+      ${bk}
+    </div>
     <button class="popact" data-trx="1">閉じる</button>`;
 }
 document.getElementById("trashBtn").addEventListener("click",openTrash);
 document.getElementById("trashOverlay").addEventListener("click",e=>{
   if(e.target===e.currentTarget||e.target.closest("[data-trx]")){ closeTrash(); return; }
   const r=e.target.closest("[data-restore]");
-  if(r) restoreFromTrash(r.dataset.restore);
+  if(r){ restoreFromTrash(r.dataset.restore); return; }
+  const b=e.target.closest("[data-bkrestore]");
+  if(b) restoreBackup(b.dataset.bkrestore);
 });
+/* 控えの時点に丸ごと戻す。戻す前に、いまの状態も控えに取っておく */
+function restoreBackup(id){
+  const b=backups[id]; if(!b||!tasksRef) return;
+  let arr=null;
+  try{ arr=JSON.parse(b.t); }catch(e){ console.error(e); alert("控えを読み込めませんでした。"); return; }
+  if(!Array.isArray(arr)){ alert("控えの形式が正しくありません。"); return; }
+  if(!confirm(`${hhmm(Number(b.at)||0)} の時点（${arr.length}件）に戻します。\n\n`
+    + `いまのタスク ${tasks.length}件 は置き換わります。\n`
+    + `戻す前の状態も控えに残すので、やり直しはできます。\n\nよろしいですか？`)) return;
+  snapshotBeforeImport("戻す前");
+  const map={};
+  arr.forEach(t=>{ const x=normalizeTask(Object.assign({},t)); if(!x.id) x.id=uid(); map[x.id]=x; });
+  if(Object.keys(attend).length || Object.keys(holiday).length){
+    map[ATT_ID]={ name:ATT_NAME, kind:"attendance", days:attend, holidays:holiday };
+  }
+  if(Object.keys(trashItems).length)  map[TRASH_ID]={ name:TRASH_NAME, kind:"trash", items:trashItems };
+  if(Object.keys(extraMembers).length) map[MEM_ID]={ name:MEM_NAME, kind:"members", items:extraMembers };
+  if(Object.keys(backups).length)      map[BK_ID]={ name:BK_NAME, kind:"backup", items:backups };
+  tasksRef.set(map)
+    .then(()=>{ closeTrash(); showToast(`${arr.length}件に戻しました`); })
+    .catch(err=>{ console.error(err); alert("戻せませんでした。通信状態を確認してください。"); });
+}
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"&&document.getElementById("trashOverlay").classList.contains("open")) closeTrash();
 });
@@ -3008,6 +3058,7 @@ function importAppend(data){
   msg+=`\n\nよろしいですか？`;
   if(!confirm(msg)) return;
 
+  snapshotBeforeImport("追加の前");
   const map={}, ids=[];
   let ord=tasks.reduce((m,x)=>Math.max(m,x.order||0),0);
   items.forEach(t=>{ t.order=++ord; map[t.id]=t; ids.push(t.id); tasks.push(t); _lastSaved[t.id]=JSON.stringify(t); });
@@ -3025,8 +3076,31 @@ function importAppend(data){
     })
     .catch(err=>{ console.error(err); alert("追加に失敗しました。権限と通信状態を確認してください。"); });
 }
+/* 取り込みの直前に、その時点の全タスクを控えとして退避する（2026-11-05 追加）。
+   事故ったときは「📥 インポート」→ 取り込み前の控えから戻せる。 */
+function snapshotBeforeImport(label){
+  if(!tasksRef) return;
+  const snap={ at:Date.now(), by:myName||"", label:label||"", count:tasks.length,
+               t:JSON.stringify(tasks) };
+  const up={ name:BK_NAME, kind:"backup" };
+  up["items/"+("b"+snap.at)]=snap;
+  tasksRef.child(BK_ID).update(up).catch(e=>console.error(e));
+  /* 直近5件だけ残す */
+  const ids=Object.keys(backups).sort();
+  while(ids.length>=5){ const old=ids.shift(); delete backups[old]; tasksRef.child(BK_ID).child("items/"+old).remove().catch(()=>{}); }
+  backups["b"+snap.at]=snap;
+}
 function importReplace(data){
-  if(!confirm(`${data.length}件のタスクで置き換えます。\n⚠ 現在のタスクはすべて消えます。よろしいですか？`)) return;
+  /* 置き換えは事故が大きいので、タスク名ではなく「置き換える」と打たせて意思を確認する */
+  const typed=prompt(
+    `⚠ 置き換えモードです。\n\n`
+    + `現在のタスク ${tasks.length}件 がすべて消え、ファイルの ${data.length}件 に入れ替わります。\n`
+    + `続けるタスクの作業記録も失われます。\n\n`
+    + `※ 既存を残して足したいだけなら、ここはキャンセルして「追加」を選んでください。\n\n`
+    + `本当に置き換える場合は、下の欄に「置き換える」と入力してください。`);
+  if(typed===null) return;
+  if(typed.trim()!=="置き換える"){ alert("入力が違うため、置き換えを中止しました。"); return; }
+  snapshotBeforeImport("置き換えの前");
   const map={};
   data.forEach(t=>{ const x=normalizeTask(Object.assign({},t)); if(!x.id) x.id=uid(); map[x.id]=x; });
   /* F出勤カレンダー・ゴミ箱・メンバーは tasks の中にあるので、消えないよう入れ直す */
@@ -3035,8 +3109,9 @@ function importReplace(data){
   }
   if(Object.keys(trashItems).length) map[TRASH_ID]={ name:TRASH_NAME, kind:"trash", items:trashItems };
   if(Object.keys(extraMembers).length) map[MEM_ID]={ name:MEM_NAME, kind:"members", items:extraMembers };
+  if(Object.keys(backups).length) map[BK_ID]={ name:BK_NAME, kind:"backup", items:backups };  // 控えも守る
   tasksRef.set(map)
-    .then(()=>alert(`インポートが完了しました（${data.length}件）。`))
+    .then(()=>alert(`インポートが完了しました（${data.length}件）。\n間違えたときは「🗑 ゴミ箱」の下にある控えから戻せます。`))
     .catch(err=>{ console.error(err); alert("インポートに失敗しました。権限と通信状態を確認してください。"); });
 }
 document.getElementById("importFile").addEventListener("change",e=>{
